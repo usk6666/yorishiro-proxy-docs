@@ -2,7 +2,7 @@
 
 The Fuzzer page lets you create, manage, and monitor fuzz testing campaigns. You can define payload positions, configure payload sets, control execution parameters, and analyze results -- all from the Web UI.
 
-<!-- TODO: Add screenshot of the Fuzzer page -->
+![Fuzzer](../images/webui_fuzzer.png)
 
 ## Tabs
 
