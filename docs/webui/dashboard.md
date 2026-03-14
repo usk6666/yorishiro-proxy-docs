@@ -2,7 +2,7 @@
 
 The Dashboard page provides a real-time overview of proxy status, traffic statistics, and operational metrics. All widgets auto-refresh every 5 seconds.
 
-<!-- TODO: Add screenshot of the Dashboard page -->
+![Dashboard](../images/webui_dashboard.png)
 
 ## Summary cards
 

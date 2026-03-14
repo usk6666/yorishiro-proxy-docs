@@ -2,7 +2,7 @@
 
 The Flows page is the primary interface for browsing captured network traffic. It displays all HTTP/1.x, HTTPS, WebSocket, HTTP/2, gRPC, and TCP flows in a paginated, filterable table.
 
-<!-- TODO: Add screenshot of the Flows page -->
+![Flows](../images/webui_flows.png)
 
 ## Flow list
 

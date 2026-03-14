@@ -2,7 +2,7 @@
 
 The Intercept page lets you review, modify, and control HTTP requests that match your intercept rules before they are forwarded to the target server. It operates as a request queue where you can inspect each intercepted request and decide what to do with it.
 
-<!-- TODO: Add screenshot of the Intercept page -->
+![Intercept](../images/webui_intercept.png)
 
 ## Tabs
 

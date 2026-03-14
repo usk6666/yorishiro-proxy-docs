@@ -2,7 +2,7 @@
 
 The Security page manages target scope rules, rate limits, diagnostic budgets, and SafetyFilter settings. It provides both read-only views of policy-level configuration and editable agent-level controls.
 
-<!-- TODO: Add screenshot of the Security page -->
+![Security](../images/webui_security.png)
 
 ## Enforcement mode
 

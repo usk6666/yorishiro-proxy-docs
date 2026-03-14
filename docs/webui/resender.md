@@ -2,7 +2,7 @@
 
 The Resender page lets you edit and resend captured requests, supporting both HTTP and TCP protocols. You can modify any part of a request, preview changes with dry-run mode, and compare responses side by side.
 
-<!-- TODO: Add screenshot of the Resender page -->
+![Resender](../images/webui_resender.png)
 
 ## Page modes
 

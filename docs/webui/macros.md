@@ -2,7 +2,7 @@
 
 The Macros page lets you define, edit, execute, and manage multi-step request sequences. Macros are useful for automating workflows like authentication flows, multi-step API interactions, and session management.
 
-<!-- TODO: Add screenshot of the Macros page -->
+![Macros](../images/webui_macros.png)
 
 ## Macro list
 

@@ -2,7 +2,7 @@
 
 The Settings page provides a tabbed interface for configuring all aspects of the proxy. It uses the MCP `configure`, `proxy_start`, and `proxy_stop` tools to apply changes.
 
-<!-- TODO: Add screenshot of the Settings page -->
+![Settings](../images/webui_settings.png)
 
 ## Tabs
 
