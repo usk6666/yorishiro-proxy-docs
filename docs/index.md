@@ -20,7 +20,7 @@
 yorishiro-proxy runs as an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server, giving AI agents full control over proxy operations through eleven MCP tools. Designed for use with Claude Code and other MCP-compatible agents, it enables automated security testing workflows without manual UI interaction. An embedded Web UI is also available for visual inspection and interactive use.
 
 !!! warning "Beta"
-    APIs and configuration may change between minor versions.
+    yorishiro-proxy is under active development. APIs, configuration formats, and protocol behavior may change between minor versions. Non-HTTP/HTTPS protocols (gRPC, WebSocket, Raw TCP, SOCKS5) are at an earlier stage of maturity and may have known limitations.
 
 ## Key features
 
@@ -114,14 +114,15 @@ See the [MCP tools overview](tools/overview.md) for details.
 
 ## Supported protocols
 
-| Protocol | Detection | Notes |
-|----------|-----------|-------|
-| HTTP/1.x | Automatic | Forward proxy mode |
-| HTTPS | CONNECT | MITM with dynamic certificate issuance |
-| HTTP/2 | h2c / ALPN | Both cleartext and TLS, with per-stream flow display |
-| gRPC | HTTP/2 content-type | Service/method extraction, streaming support, structured metadata display |
-| WebSocket | HTTP Upgrade | Message-level recording with per-message display |
-| Raw TCP | Fallback | Captures any unrecognized protocol, with TCP forwarding mappings |
+| Protocol | Detection | Status | Notes |
+|----------|-----------|--------|-------|
+| HTTP/1.x | Automatic | Stable | Forward proxy mode |
+| HTTPS | CONNECT | Stable | MITM with dynamic certificate issuance |
+| HTTP/2 | h2c / ALPN | Beta | Both cleartext and TLS, with per-stream flow display |
+| gRPC | HTTP/2 content-type | Experimental | Service/method extraction, streaming support, structured metadata display |
+| WebSocket | HTTP Upgrade | Experimental | Message-level recording with per-message display |
+| Raw TCP | Fallback | Experimental | Captures any unrecognized protocol, with TCP forwarding mappings |
+| SOCKS5 | SOCKS5 handshake | Experimental | Routes arbitrary TCP traffic through the proxy (RFC 1928) |
 
 See the [Protocols](protocols/http.md) section for detailed documentation on each protocol.
 
