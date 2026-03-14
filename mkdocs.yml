@@ -1,0 +1,147 @@
+site_name: yorishiro-proxy
+site_url: https://usk6666.github.io/yorishiro-proxy-docs/
+site_description: Official documentation for yorishiro-proxy — an AI-first MITM proxy tool controlled through MCP.
+site_author: usk6666
+
+repo_name: usk6666/yorishiro-proxy
+repo_url: https://github.com/usk6666/yorishiro-proxy
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.instant
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - pymdownx.keys
+  - pymdownx.mark
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quick setup: getting-started/quick-setup.md
+      - MCP configuration: getting-started/mcp-configuration.md
+      - CA certificate: getting-started/ca-certificate.md
+      - First capture: getting-started/first-capture.md
+  - Concepts:
+      - Architecture: concepts/architecture.md
+      - Flows: concepts/flows.md
+      - MCP-first design: concepts/mcp-first-design.md
+      - Security model: concepts/security-model.md
+  - MCP tools:
+      - Overview: tools/overview.md
+      - proxy_start: tools/proxy-start.md
+      - proxy_stop: tools/proxy-stop.md
+      - configure: tools/configure.md
+      - query: tools/query.md
+      - resend: tools/resend.md
+      - fuzz: tools/fuzz.md
+      - macro: tools/macro.md
+      - intercept: tools/intercept.md
+      - manage: tools/manage.md
+      - security: tools/security.md
+      - plugin: tools/plugin.md
+  - Features:
+      - Resender: features/resender.md
+      - Fuzzer: features/fuzzer.md
+      - Macros: features/macros.md
+      - Intercept: features/intercept.md
+      - Auto-transform: features/auto-transform.md
+      - Target scope: features/target-scope.md
+      - SafetyFilter: features/safety-filter.md
+      - Rate limits & budgets: features/rate-limits.md
+      - Flow export & import: features/flow-export-import.md
+      - Comparer: features/comparer.md
+      - Technology detection: features/technology-detection.md
+  - Protocols:
+      - HTTP: protocols/http.md
+      - HTTPS MITM: protocols/https-mitm.md
+      - HTTP/2: protocols/http2.md
+      - gRPC: protocols/grpc.md
+      - WebSocket: protocols/websocket.md
+      - Raw TCP: protocols/raw-tcp.md
+      - SOCKS5: protocols/socks5.md
+  - Web UI:
+      - Overview: webui/overview.md
+      - Flows: webui/flows.md
+      - Dashboard: webui/dashboard.md
+      - Intercept: webui/intercept.md
+      - Resender: webui/resender.md
+      - Fuzzer: webui/fuzzer.md
+      - Macros: webui/macros.md
+      - Security: webui/security.md
+      - Settings: webui/settings.md
+  - Plugins:
+      - Overview: plugins/overview.md
+      - Writing plugins: plugins/writing-plugins.md
+      - Hook reference: plugins/hook-reference.md
+      - Data map reference: plugins/data-map-reference.md
+      - Codec plugins: plugins/codec-plugins.md
+      - Examples: plugins/examples.md
+  - Configuration:
+      - CLI flags: configuration/cli-flags.md
+      - Config file: configuration/config-file.md
+      - TLS: configuration/tls.md
+      - Upstream proxy: configuration/upstream-proxy.md
+      - Retention: configuration/retention.md
+  - Guides:
+      - Vulnerability assessment: guides/vulnerability-assessment.md
+      - API testing: guides/api-testing.md
+      - Multi-agent: guides/multi-agent.md
+      - proxychains: guides/proxychains.md
+      - Claude Code skills: guides/claude-code-skills.md
+  - Reference:
+      - Built-in codecs: reference/built-in-codecs.md
+      - Changelog: reference/changelog.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/usk6666/yorishiro-proxy
