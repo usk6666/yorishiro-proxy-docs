@@ -234,9 +234,79 @@ When a blocked request times out:
 }
 ```
 
+## Raw bytes mode
+
+By default, the intercept tool operates in **structured mode** -- it parses and serializes requests at the HTTP (L7) layer. This means modifications go through the standard HTTP library, which may normalize headers, adjust `Content-Length`, and apply transfer encoding.
+
+**Raw bytes mode** bypasses this entirely. When you set `"mode": "raw"`, the proxy sends bytes directly on the wire without any HTTP library processing. This gives you full control over every byte of the request or response.
+
+### Structured vs raw mode
+
+| Aspect | Structured mode (default) | Raw mode |
+|--------|--------------------------|----------|
+| Layer | L7 (HTTP semantics) | L4 (raw bytes on the wire) |
+| Modifications | `override_method`, `override_headers`, etc. | `raw_override_base64` (entire payload) |
+| Normalization | HTTP library may adjust headers, Content-Length, encoding | None -- bytes are forwarded as-is |
+| Auto-transform | Applied (e.g., gzip decompression for display) | Not applied |
+| Use case | Standard request/response editing | Protocol-level anomaly testing |
+
+### HTTP/1.x raw forwarding
+
+In raw mode for HTTP/1.x, the proxy writes your raw bytes directly to a TCP (or TLS) connection to the upstream server, completely bypassing `net/http.Transport`. The raw response from upstream is read back and forwarded to the client as-is.
+
+This enables testing scenarios where HTTP library normalization would otherwise mask the issue:
+
+- **HTTP Request Smuggling** -- craft requests with conflicting `Content-Length` and `Transfer-Encoding` headers (CL/TE, TE/CL)
+- **Header injection** -- send malformed headers that a standard HTTP library would reject or rewrite
+- **Protocol downgrade testing** -- send intentionally non-conformant HTTP to observe server behavior
+
+### HTTP/2 raw forwarding
+
+For HTTP/2, raw mode operates on individual **frames** rather than the complete connection stream. When you provide raw bytes, the proxy:
+
+1. Parses the 9-byte frame headers to locate stream ID fields
+2. Rewrites stream IDs to match the upstream connection's allocated stream (connection-level frames with stream ID 0 are not rewritten)
+3. Forwards the frames as-is, preserving all other bytes including flags, padding, and payload
+
+This means you can craft custom HEADERS, DATA, or other frame types while the proxy handles the stream multiplexing automatically.
+
+### Using raw mode
+
+**Release with raw bytes** (forward original wire bytes without HTTP normalization):
+
+```json
+// intercept
+{
+  "action": "release",
+  "params": {
+    "intercept_id": "int-abc-123",
+    "mode": "raw"
+  }
+}
+```
+
+**Modify and forward with raw bytes** (replace the entire payload):
+
+```json
+// intercept
+{
+  "action": "modify_and_forward",
+  "params": {
+    "intercept_id": "int-abc-123",
+    "mode": "raw",
+    "raw_override_base64": "R0VUIC8gSFRUUC8xLjENCkhvc3Q6IGV4YW1wbGUuY29tDQoNCg=="
+  }
+}
+```
+
+The `raw_override_base64` value is the Base64 encoding of the complete raw bytes you want sent on the wire. For HTTP/1.x, this is the full request including the request line, headers, and body. For HTTP/2, this is one or more serialized frames.
+
+!!! note
+    Raw mode requires raw bytes to be available for the intercepted item. The response includes `raw_bytes_available: true` when this is the case.
+
 ## WebUI integration
 
-The intercept queue is also accessible through the Web UI, where you can visually inspect and act on queued items. See [WebUI Intercept](../webui/intercept.md) for details.
+The intercept queue is also accessible through the Web UI, where you can visually inspect and act on queued items. The WebUI provides a hex dump editor and text editor for raw bytes editing. See [WebUI Intercept](../webui/intercept.md) for details.
 
 ## Practical use cases
 
