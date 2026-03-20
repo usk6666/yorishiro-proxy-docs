@@ -101,7 +101,7 @@ Returns Policy and Agent Layer budgets with effective values and current usage. 
 
 ### get_safety_filter
 
-Returns the current SafetyFilter configuration and rules (read-only). No parameters.
+Returns the current SafetyFilter configuration and rules (read-only). SafetyFilter rules are part of the Policy Layer and cannot be modified at runtime. No parameters.
 
 ## Target rule fields
 
@@ -282,6 +282,36 @@ All specified fields must match for a rule to apply (AND logic).
 // security
 {
   "action": "get_safety_filter"
+}
+```
+
+Example response:
+
+```json
+{
+  "enabled": true,
+  "input_rules": [
+    {
+      "id": "destructive-sql:drop",
+      "name": "DROP statement",
+      "pattern": "(compiled regex)",
+      "targets": ["body", "url", "query"],
+      "action": "block",
+      "category": "destructive-sql"
+    }
+  ],
+  "output_rules": [
+    {
+      "id": "credit-card:separated",
+      "name": "Credit card (separated)",
+      "pattern": "(compiled regex)",
+      "targets": ["body"],
+      "action": "mask",
+      "replacement": "[MASKED:credit_card]",
+      "category": "credit-card"
+    }
+  ],
+  "immutable": true
 }
 ```
 

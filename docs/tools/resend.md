@@ -86,6 +86,21 @@ Resend raw bytes from a recorded flow over TCP/TLS. Useful for testing HTTP smug
 | `dry_run` | boolean | No | `false` | Preview raw bytes without sending |
 | `tag` | string | No | | Tag to attach to the result flow |
 
+#### Raw bytes patching
+
+The `resend_raw` action supports two ways to modify raw bytes:
+
+- **Full replacement** (`override_raw_base64`): Replace the entire request with Base64-encoded bytes.
+- **Partial patches** (`patches`): Apply byte-level modifications to the original raw bytes.
+
+Each patch in the `patches` array is one of:
+
+| Patch type | Fields | Description |
+|------------|--------|-------------|
+| Offset overwrite | `offset`, `data_base64` | Overwrite bytes at the specified offset |
+| Text find-replace | `find_text`, `replace_text` | Text-based search and replace |
+| Binary find-replace | `find_base64`, `replace_base64` | Binary search and replace (Base64-encoded) |
+
 #### Response
 
 | Field | Type | Description |
@@ -255,6 +270,49 @@ The `resend` action supports optional hooks that execute macros before sending a
   "params": {
     "flow_id_a": "original-flow-123",
     "flow_id_b": "mutated-flow-456"
+  }
+}
+```
+
+### Resend raw with full replacement
+
+```json
+// resend
+{
+  "action": "resend_raw",
+  "params": {
+    "flow_id": "abc-123",
+    "override_raw_base64": "R0VUIC8gSFRUUC8xLjENCkhvc3Q6IGV4YW1wbGUuY29tDQoNCg=="
+  }
+}
+```
+
+### Resend raw with byte-level patches
+
+```json
+// resend
+{
+  "action": "resend_raw",
+  "params": {
+    "flow_id": "abc-123",
+    "patches": [
+      {"find_text": "Host: old.com", "replace_text": "Host: new.com"},
+      {"offset": 0, "data_base64": "UE9TVA=="}
+    ]
+  }
+}
+```
+
+### Resend raw dry-run preview
+
+```json
+// resend
+{
+  "action": "resend_raw",
+  "params": {
+    "flow_id": "abc-123",
+    "patches": [{"offset": 0, "data_base64": "UE9TVA=="}],
+    "dry_run": true
   }
 }
 ```
