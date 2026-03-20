@@ -120,9 +120,45 @@ Control frames (Close, Ping, Pong) are **not** sent to plugins. This prevents pl
 - **Fragmented message**: accumulated size is capped at the configured maximum WebSocket message size
 - **Recorded payload**: may be truncated to the configured maximum recording payload size
 
+## Safety filter
+
+The safety filter applies to WebSocket text frames sent from the client to the server (send direction). Binary frames and control frames are not checked.
+
+When a text frame matches a safety filter input rule:
+
+- **Block action** (default) -- The frame is blocked and not forwarded to the upstream server. The frame is still recorded in the flow store with `safety_blocked: true` metadata. If the blocked frame is the first in a fragmented message, all subsequent continuation frames in that message are also dropped.
+- **Log-only action** -- The frame is forwarded normally but recorded with `safety_logged: true` metadata for later review.
+
+Response-direction frames (server to client) are checked against the output filter, which can redact sensitive data patterns (PII, credentials) in recorded payloads without affecting the forwarded data.
+
+## Frame-level intercept
+
+Intercept rules can match on WebSocket frames using the `websocket_frame` phase. When a frame matches an intercept rule, it is held in the intercept queue and the WebSocket relay pauses until you take action.
+
+Intercepted WebSocket frames include the following metadata:
+
+| Field | Description |
+|-------|-------------|
+| `opcode` | Frame opcode name (e.g., `Text`, `Binary`) |
+| `direction` | `client_to_server` or `server_to_client` |
+| `flow_id` | The WebSocket flow ID this frame belongs to |
+| `upgrade_url` | The URL from the original WebSocket upgrade request |
+| `sequence` | Frame sequence number within the WebSocket connection |
+
+You can modify the frame payload using `override_body` with the `modify_and_forward` action, or drop the frame entirely with the `drop` action.
+
+## permessage-deflate
+
+The proxy supports the `permessage-deflate` WebSocket extension (RFC 7692). When the upstream server negotiates permessage-deflate in the `Sec-WebSocket-Extensions` response header, the proxy:
+
+1. **Forwards compressed frames on the wire** -- Compressed frames are relayed between client and server without re-encoding, preserving wire transparency.
+2. **Decompresses frames before recording** -- Stored message data is always the decompressed plaintext, making recorded payloads readable and searchable.
+3. **Records compression metadata** -- A `compressed: true` metadata flag is set on messages that were decompressed for storage.
+
+The proxy respects `server_no_context_takeover` and `client_no_context_takeover` parameters, and configures decompression window bits per the negotiated extension parameters.
+
 ## Limitations
 
-- **No compression extensions** -- per-message compression (permessage-deflate) is not decoded by the proxy; compressed frames pass through as-is
 - **No subprotocol awareness** -- the proxy treats all WebSocket traffic as opaque frames regardless of the negotiated subprotocol
 - **Frame-level forwarding** -- frames are forwarded individually, preserving masking and fragmentation as received from the client
 
@@ -130,4 +166,6 @@ Control frames (Close, Ping, Pong) are **not** sent to plugins. This prevents pl
 
 - [HTTP/1.x](http.md) -- the HTTP upgrade mechanism that initiates WebSocket connections
 - [HTTPS MITM](https-mitm.md) -- WSS connections through TLS tunnels
+- [Intercept feature](../features/intercept.md) -- intercept rules and the WebSocket frame phase
+- [WebUI: Intercept](../webui/intercept.md) -- managing intercepted WebSocket frames in the UI
 - [Plugin hook reference](../plugins/hook-reference.md) -- detailed hook documentation
