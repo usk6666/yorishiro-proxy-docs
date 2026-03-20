@@ -11,7 +11,7 @@ The main table shows one row per captured flow with the following columns:
 | Column | Description |
 |--------|-------------|
 | **ID** | First 8 characters of the flow's unique identifier |
-| **Protocol** | Color-coded badge (HTTP/1.x, HTTPS, WebSocket, HTTP/2, gRPC, TCP) |
+| **Protocol** | Color-coded badge (HTTP/1.x, HTTPS, WebSocket, HTTP/2, gRPC, TCP, SOCKS5+HTTPS, SOCKS5+HTTP) |
 | **State** | `active`, `complete`, or `error` |
 | **Method** | HTTP method (GET, POST, etc.) or blank for non-HTTP protocols |
 | **URL** | Full request URL |
@@ -26,13 +26,18 @@ Click any row to navigate to the flow detail view.
 
 Click the **Filters** button in the toolbar to reveal the filter panel. You can filter by:
 
-- **Protocol** -- Radio buttons for HTTP/1.x, HTTPS, WebSocket, HTTP/2, gRPC, TCP, or All
+- **Protocol** -- Radio buttons for HTTP/1.x, HTTPS, WebSocket, HTTP/2, gRPC, TCP, SOCKS5+HTTPS, SOCKS5+HTTP, or All
 - **Method** -- Dropdown for GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
 - **Status** -- Dropdown for specific status codes (200, 301, 400, 500)
 - **Flow state** -- Dropdown for active, complete, or error
+- **Scheme** -- Dropdown for `https`, `http`, `wss`, `ws`, `tcp`
+- **Host** -- Text input to filter by target hostname (debounced)
+- **Blocked by** -- Dropdown for `target_scope`, `intercept_drop`, `rate_limit`, `safety_filter`
 - **URL pattern** -- Text input with debounced search (300ms delay)
 - **Body contains** -- Text search within response bodies
 - **Tag** -- Filter by flow tag
+
+The query API also supports `technology` and `conn_id` filters, which can be used via the MCP `query` tool.
 
 Filters are applied in combination. When any text filter changes, the pagination resets to page 1 automatically.
 
@@ -69,7 +74,42 @@ Clicking a flow row navigates to the detail page (`/flows/{id}`), which shows th
 
 For HTTP/2 and gRPC flows, the detail view also shows pseudo-headers (`:method`, `:path`, `:authority`, `:scheme`) and stream information.
 
-For WebSocket flows, a message list shows individual frames with direction indicators (send/receive), timestamps, and payload content.
+### Raw tab
+
+When raw bytes are available for a flow, a **Raw** tab appears alongside the Headers and Body tabs. The Raw tab provides a hex dump view and a text view of the wire-observed bytes, giving you visibility into the exact data as captured on the network.
+
+- Toggle between **Hex** and **Text** display modes
+- Hex mode shows a standard hex dump with offset, hex values, and ASCII representation
+
+!!! warning "Size safeguards"
+    The raw bytes editor shows a warning when the payload exceeds **64 KB**. The hex editor is disabled entirely when the payload exceeds **1 MB** -- use Text mode for large payloads.
+
+### WebSocket message list
+
+For WebSocket flows, an enhanced message list replaces the standard message table. Each frame row displays:
+
+- **Sequence number** -- `#1`, `#2`, etc.
+- **Direction arrow** -- green upward arrow for send (client-to-server), blue downward arrow for receive (server-to-client)
+- **Opcode badge** -- color-coded by frame type:
+
+    | Opcode | Badge color |
+    |--------|-------------|
+    | Text | Green (success) |
+    | Binary | Blue (info) |
+    | Close | Red (danger) |
+    | Ping | Yellow (warning) |
+    | Pong | Yellow (warning) |
+
+- **Size** -- human-readable byte size
+- **Timestamp** -- time with millisecond precision
+- **Content preview** -- truncated payload preview
+
+Click a message row to expand its detail panel, which provides:
+
+- **Binary messages** -- Toggle between **Hex** dump and **Base64** display modes
+- **Text messages** -- Automatic JSON detection with **Pretty** / **Raw** toggle for JSON payloads
+- **Close frames** -- Parsed status code with description (e.g., `1000 Normal Closure`) and close reason text
+- **Metadata** -- All frame metadata (opcode, masked, fin, etc.) displayed as key-value pairs
 
 ### Export options
 
