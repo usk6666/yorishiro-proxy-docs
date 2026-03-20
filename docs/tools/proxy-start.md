@@ -13,7 +13,7 @@ Start a proxy listener with optional configuration. The proxy listens on the spe
 | `tls_passthrough` | string[] | No | `[]` | Domain patterns that bypass TLS interception |
 | `intercept_rules` | array | No | `[]` | Rules for intercepting requests/responses |
 | `auto_transform` | array | No | `[]` | Rules for automatic request/response modification |
-| `tcp_forwards` | object | No | `{}` | Raw TCP forwarding map (`port` -> `upstream host:port`) |
+| `tcp_forwards` | object | No | `{}` | TCP forwarding map (`port` -> target string or ForwardConfig object) |
 | `protocols` | string[] | No | all enabled | Enabled protocols for detection |
 | `socks5_auth` | string | No | `"none"` | SOCKS5 authentication method (`none` or `password`) |
 | `socks5_username` | string | No | | Username for SOCKS5 password auth |
@@ -63,6 +63,42 @@ Conditions:
 | `header_match` | object | Maps header names to regex patterns (AND logic) |
 
 Multiple rules use OR logic -- a request/response is intercepted if any enabled rule matches.
+
+### tcp_forwards
+
+Maps local listen ports to upstream forwarding configurations. Each entry maps a port number (string key) to either a string or a ForwardConfig object.
+
+**String format (legacy)** -- the value is an upstream `host:port` address. Traffic is relayed as raw bytes with no L7 parsing:
+
+```json
+"3306": "db.example.com:3306"
+```
+
+**ForwardConfig object format** -- provides control over protocol detection and TLS termination:
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `target` | string | Yes | -- | Upstream address in `host:port` format |
+| `protocol` | string | No | `"auto"` | Expected protocol for L7 parsing |
+| `tls` | boolean | No | `false` | Enable TLS MITM termination on the forwarded port |
+
+**Protocol values:**
+
+| Value | Description |
+|-------|-------------|
+| `"auto"` | Peek-based detection -- the proxy inspects initial bytes to determine the L7 protocol |
+| `"raw"` | No L7 parsing -- relay as opaque bytes (same behavior as the legacy string format) |
+| `"http"` | Parse traffic as HTTP/1.x |
+| `"http2"` | Parse traffic as HTTP/2 |
+| `"grpc"` | Parse traffic as gRPC (over HTTP/2) |
+| `"websocket"` | Parse traffic as WebSocket |
+
+**TLS MITM:** when `tls` is `true`, the proxy terminates TLS on the forwarded port. It issues a certificate using the target hostname and then applies L7 parsing to the decrypted traffic. This is useful for inspecting TLS-wrapped services like gRPC-over-TLS or HTTPS backends.
+
+!!! note
+    Setting `tls: true` with `protocol: "raw"` is valid but unusual -- TLS is terminated, yet the decrypted payload is relayed as raw bytes without L7 parsing.
+
+Both formats can be mixed in the same `tcp_forwards` object.
 
 ### protocols
 
@@ -155,7 +191,7 @@ Valid values: `"HTTP/1.x"`, `"HTTPS"`, `"WebSocket"`, `"HTTP/2"`, `"gRPC"`, `"SO
 }
 ```
 
-### Start with TCP forwarding
+### Start with TCP forwarding (string format)
 
 ```json
 // proxy_start
@@ -164,6 +200,27 @@ Valid values: `"HTTP/1.x"`, `"HTTPS"`, `"WebSocket"`, `"HTTP/2"`, `"gRPC"`, `"SO
   "tcp_forwards": {
     "3306": "db.example.com:3306",
     "6379": "redis.example.com:6379"
+  }
+}
+```
+
+### Start with TCP forwarding (ForwardConfig with protocol detection)
+
+```json
+// proxy_start
+{
+  "listen_addr": "127.0.0.1:8080",
+  "tcp_forwards": {
+    "50051": {
+      "target": "api.example.com:50051",
+      "protocol": "grpc"
+    },
+    "8443": {
+      "target": "secure.example.com:443",
+      "protocol": "http2",
+      "tls": true
+    },
+    "3306": "db.example.com:3306"
   }
 }
 ```

@@ -63,12 +63,34 @@ You can add and remove passthrough rules from this tab.
 
 ## TCP forwards
 
-Configure TCP port forwarding rules that map local ports to upstream targets. Each rule specifies:
+Configure TCP port forwarding rules that map local ports to upstream targets. Each forward rule specifies:
 
-- **Local port** -- The port to listen on
-- **Upstream target** -- The `host:port` to forward traffic to
+- **Local port** -- The port to listen on (1--65535)
+- **Upstream host** -- The target hostname (e.g., `db.example.com`)
+- **Upstream port** -- The target port (1--65535)
+- **Protocol** -- Protocol hint for L7 parsing:
 
-This is useful for forwarding non-HTTP protocols (databases, custom TCP services) through the proxy for inspection.
+    | Value | Description |
+    |-------|-------------|
+    | `auto` | Peek-based protocol detection (default) |
+    | `raw` | No L7 parsing, forward raw bytes |
+    | `http` | Force HTTP/1.x parsing |
+    | `http2` | Force HTTP/2 parsing |
+    | `grpc` | Force gRPC parsing (over HTTP/2) |
+    | `websocket` | Force WebSocket frame parsing |
+
+- **TLS termination** -- Checkbox to enable TLS MITM on the forwarded port. When checked, the proxy terminates TLS using the target hostname for certificate generation, then applies L7 parsing to the decrypted traffic.
+
+TCP forwards are start-time configuration: they are applied when starting a new listener via `proxy_start`. Adding a forward restarts the proxy with the updated mapping set. To remove a forward, restart the proxy with the desired configuration.
+
+Each configured forward is displayed in the mapping list with:
+
+- A port badge (e.g., `:3306`)
+- The upstream target (`host:port`)
+- A protocol badge -- green for an explicit protocol, gray for `auto`
+- A **TLS** badge (yellow) when TLS termination is enabled
+
+This is useful for forwarding non-HTTP protocols (databases, gRPC services, custom TCP services) through the proxy for inspection.
 
 ## Intercept rules
 

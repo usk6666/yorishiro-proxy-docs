@@ -51,6 +51,79 @@ You can configure multiple forwarding targets:
 
 Forward mappings can be updated dynamically -- new mappings are merged with existing ones, so previously configured forwards remain active.
 
+### Structured ForwardConfig format
+
+In addition to the legacy string format, you can use a ForwardConfig object to control protocol detection and TLS termination per port:
+
+```json
+// proxy_start
+{
+  "tcp_forwards": {
+    "50051": {
+      "target": "api.example.com:50051",
+      "protocol": "grpc"
+    },
+    "8443": {
+      "target": "secure.example.com:443",
+      "protocol": "http2",
+      "tls": true
+    },
+    "3306": "db.example.com:3306"
+  }
+}
+```
+
+See [proxy_start](../tools/proxy-start.md#tcp_forwards) for the full ForwardConfig reference.
+
+## Protocol detection on TCP forwards
+
+When you configure a TCP forward with the ForwardConfig object format, the `protocol` field controls how the proxy handles the connection at L7.
+
+### Auto detection (default)
+
+When `protocol` is `"auto"` (or omitted), the proxy peeks at the initial bytes of the connection to determine the L7 protocol. The detection logic follows the same priority as the main listener:
+
+1. If the bytes match the HTTP/2 connection preface, the connection is handled as HTTP/2
+2. If the bytes match an HTTP method prefix, the connection is handled as HTTP/1.x
+3. Otherwise, the connection falls through to raw TCP relay
+
+This allows a single forwarded port to handle multiple protocols automatically.
+
+### Explicit protocol
+
+When `protocol` is set to a specific value (`"http"`, `"http2"`, `"grpc"`, `"websocket"`), the proxy delegates the connection directly to the corresponding protocol handler without peeking. This is useful when you know the upstream protocol in advance and want to skip detection overhead.
+
+### Raw mode
+
+When `protocol` is `"raw"`, the proxy performs no L7 parsing and relays the connection as opaque bytes. This is the same behavior as the legacy string format (`"3306": "db.example.com:3306"`).
+
+## TLS MITM on TCP forwards
+
+When `tls` is `true` in a ForwardConfig, the proxy terminates TLS on the forwarded port before applying protocol detection or relay. The proxy:
+
+1. Accepts the inbound TLS connection, issuing a certificate using the target hostname
+2. Decrypts the traffic
+3. Applies L7 protocol handling (based on the `protocol` setting) to the decrypted stream
+4. Forwards the plaintext to the upstream target
+
+This enables inspection of TLS-wrapped services such as gRPC-over-TLS or HTTPS backends that are accessed via TCP forwarding rather than through the HTTP CONNECT proxy.
+
+```json
+// proxy_start
+{
+  "tcp_forwards": {
+    "8443": {
+      "target": "secure.example.com:443",
+      "protocol": "auto",
+      "tls": true
+    }
+  }
+}
+```
+
+!!! note
+    Setting `tls: true` with `protocol: "raw"` is valid -- TLS is terminated but the decrypted payload is relayed as raw bytes without L7 parsing.
+
 ## Data recording
 
 All data flowing through the relay is recorded as flow messages:
@@ -115,11 +188,11 @@ Plugin errors are logged but do not interrupt the relay (fail-open behavior).
 
 ## Limitations
 
-- **No protocol awareness** -- the raw TCP handler treats all traffic as opaque bytes with no protocol-specific parsing
-- **No TLS termination** -- encrypted TCP connections pass through as raw bytes without decryption
+- **No protocol awareness in raw mode** -- when `protocol` is `"raw"` (or using the legacy string format), the handler treats all traffic as opaque bytes with no protocol-specific parsing. Use ForwardConfig with `protocol: "auto"` or an explicit protocol to enable L7 parsing.
+- **No TLS termination in raw mode** -- without `tls: true` in ForwardConfig, encrypted TCP connections pass through as raw bytes without decryption
 - **Explicit mapping required** -- connections to unmapped ports are closed immediately
 - **No target scope enforcement** -- the TCP handler does not apply target scope rules (the mapping itself acts as the scope)
-- **No safety filter** -- since there is no HTTP-layer understanding, safety filter rules do not apply
+- **No safety filter** -- since there is no HTTP-layer understanding in raw mode, safety filter rules do not apply
 
 ## Related pages
 

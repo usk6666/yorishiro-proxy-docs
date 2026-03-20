@@ -149,11 +149,13 @@ Configures auto-transform rules for automatic request/response modification. Thi
 
 ### `tcp_forwards`
 
-Maps local listen ports to upstream TCP addresses for raw TCP forwarding.
+Maps local listen ports to upstream forwarding configurations. Each value can be a string (legacy format) or a ForwardConfig object with protocol detection and TLS options.
 
 | Type | Default |
 |------|---------|
 | `object` | `{}` |
+
+**String format (legacy)** -- forwards raw bytes without L7 parsing:
 
 ```json
 {
@@ -163,6 +165,35 @@ Maps local listen ports to upstream TCP addresses for raw TCP forwarding.
   }
 }
 ```
+
+**ForwardConfig object format** -- enables protocol detection and TLS MITM:
+
+```json
+{
+  "tcp_forwards": {
+    "50051": {
+      "target": "api.internal:50051",
+      "protocol": "grpc"
+    },
+    "8443": {
+      "target": "backend.internal:443",
+      "protocol": "auto",
+      "tls": true
+    },
+    "5432": "db.internal:5432"
+  }
+}
+```
+
+ForwardConfig fields:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `target` | `string` | (required) | Upstream `host:port` address |
+| `protocol` | `string` | `"auto"` | L7 protocol: `auto`, `raw`, `http`, `http2`, `grpc`, `websocket` |
+| `tls` | `bool` | `false` | Enable TLS MITM termination on this port |
+
+Both formats can be mixed in the same object. Legacy string values are equivalent to `{"target": "host:port", "protocol": "raw"}`.
 
 ### SOCKS5 authentication
 
@@ -510,7 +541,11 @@ A comprehensive configuration demonstrating all available sections:
     }
   ],
   "tcp_forwards": {
-    "5432": "db.internal:5432"
+    "5432": "db.internal:5432",
+    "50051": {
+      "target": "api.internal:50051",
+      "protocol": "grpc"
+    }
   },
   "client_cert": "/path/to/client.crt",
   "client_key": "/path/to/client.key",
