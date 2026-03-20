@@ -28,23 +28,62 @@ The proxy parses this path and stores the extracted service and method names as 
 
 If the path cannot be parsed (e.g., malformed URLs), the service and method are recorded as `unknown`.
 
-## gRPC frame parsing
+## Protobuf framing
 
-gRPC messages are framed using a 5-byte Length-Prefixed Message format:
+gRPC messages use a Length-Prefixed Message format with a 5-byte header:
 
 ```
-+------------------+------------------+
-| Compressed (1B)  | Length (4B, BE)  |  Payload (N bytes)
-+------------------+------------------+
++------------------+------------------+-------------------+
+| Compressed (1B)  | Length (4B, BE)  |  Payload (N bytes) |
++------------------+------------------+-------------------+
 ```
 
-- **Compressed flag**: `0` = uncompressed, `1` = compressed (per `grpc-encoding` header)
-- **Length**: 4-byte big-endian uint32 indicating the payload size
-- **Payload**: the serialized Protocol Buffers (or JSON) message
+- **Compressed flag** (1 byte): `0` = uncompressed, `1` = compressed (per `grpc-encoding` header)
+- **Length** (4 bytes): big-endian uint32 indicating the payload size
+- **Payload** (N bytes): the serialized Protocol Buffers (or JSON) message
 
 The proxy parses all frames from both the request and response bodies. Each frame's payload is stored as a separate flow message, preserving the compressed flag in metadata.
 
-## Streaming classification
+## Progressive recording
+
+Unlike HTTP/1.x flows that are recorded only after the full request/response cycle, gRPC flows use progressive (frame-by-frame) recording. This means you can see active gRPC streams in the flow list before they complete.
+
+The lifecycle works as follows:
+
+1. **Flow creation** -- when the first gRPC request arrives, a flow is created with `State="active"` and `FlowType="unary"` (the initial default)
+2. **Initial send message** -- the request headers (method, URL, service, method) are recorded as the first send message (sequence 0)
+3. **Frame-by-frame recording** -- as each gRPC frame arrives (from either client or server), it is immediately appended as a new flow message via `AppendMessage`
+4. **Stream completion** -- when the stream terminates, the flow is updated to `State="complete"` with the final flow type and trailer metadata
+
+Each recorded frame message includes:
+
+| Metadata key | Description |
+|-------------|-------------|
+| `direction` | `"client_to_server"` or `"server_to_client"` |
+| `sequence` | Message sequence number within the flow |
+| `compressed` | `"true"` if the frame's compressed flag is set |
+| `encoding` | `"protobuf"` |
+| `grpc_encoding` | Compression algorithm (e.g., `"gzip"`) if present |
+
+A per-stream message count limit prevents excessive memory use for very long-running streams. When the limit is reached, frames continue to be forwarded but are no longer recorded.
+
+## Streaming transport
+
+The proxy handles all four gRPC streaming patterns using bidirectional io.Pipe-based streaming. Instead of buffering the entire request body before forwarding (which would deadlock bidirectional streams), data is streamed as it arrives:
+
+```
+Client --> Read+Parse --> Pipe Writer --> Upstream
+                |
+                v
+         FrameBuffer (progressive recording)
+
+Upstream --> Read+Parse+Flush --> Client
+     |
+     v
+FrameBuffer (progressive recording)
+```
+
+### Streaming classification
 
 The proxy classifies each gRPC session based on the number of request and response frames:
 
@@ -54,12 +93,39 @@ The proxy classifies each gRPC session based on the number of request and respon
 | >1 | >1 | `bidirectional` |
 | Other combinations | | `stream` (client or server streaming) |
 
-This classification covers all four gRPC streaming patterns:
+This covers all four gRPC patterns:
 
 - **Unary RPC**: single request, single response
 - **Server streaming**: single request, multiple responses
 - **Client streaming**: multiple requests, single response
 - **Bidirectional streaming**: multiple requests, multiple responses
+
+The flow type starts as `"unary"` when the flow is created and is updated to the final classification when the stream completes.
+
+## Trailer handling
+
+gRPC relies on HTTP/2 trailers to carry status information. The proxy records trailers in a dedicated final receive message with `grpc_type: "trailers"`.
+
+### Standard trailers
+
+In a normal gRPC response, trailers arrive as a HEADERS frame with `END_STREAM` after all DATA frames. The proxy extracts:
+
+- `grpc-status` -- the gRPC status code (e.g., `0` for OK)
+- `grpc-message` -- the error message (if any)
+
+These values are recorded in the final receive message metadata and in the flow's tags as `grpc_status`.
+
+### Trailers-only responses
+
+A trailers-only response occurs when the server sends `grpc-status` in the initial response headers (no DATA frames). This happens for immediate errors like `UNIMPLEMENTED` or `PERMISSION_DENIED`.
+
+The proxy detects trailers-only responses by checking whether `Grpc-Status` is present in the response headers (rather than in trailers). When detected, the final receive message includes:
+
+```
+"grpc_trailers_only": "true"
+```
+
+This `grpc_trailers_only` metadata field lets you distinguish trailers-only responses from normal responses where no data frames happened to be sent.
 
 ## Flow recording structure
 
@@ -67,7 +133,7 @@ A gRPC flow is recorded with:
 
 - **Protocol**: `gRPC`
 - **Flow type**: `unary`, `stream`, or `bidirectional`
-- **State**: `complete`
+- **State**: `active` during streaming, `complete` when finished
 
 ### Messages
 
@@ -93,11 +159,23 @@ Request frames are recorded as `send` messages, response frames as `receive` mes
 | `grpc_encoding` | Compression encoding if present |
 | `compressed` | `"true"` if the frame's compressed flag is set |
 
-The first send message carries the HTTP method, URL, and request headers. The first receive message carries the HTTP status code and response headers. The last receive message includes trailers (which carry `grpc-status` and `grpc-message`).
+The first send message carries the HTTP method, URL, and request headers. The first receive message carries the HTTP status code and response headers. The last receive message (with `grpc_type: "trailers"`) includes trailers and the final `grpc-status`.
+
+### Flow tags
+
+Completed gRPC flows include the following tags:
+
+| Tag | Description |
+|-----|-------------|
+| `streaming_type` | `"grpc"` |
+| `grpc_service` | Service name |
+| `grpc_method` | Method name |
+| `grpc_status` | gRPC status code |
+| `grpc_messages_recorded` | Total number of messages recorded |
 
 ### gRPC status codes
 
-The proxy extracts the gRPC status from trailers (or response headers for Trailers-Only responses):
+The proxy extracts the gRPC status from trailers (or response headers for trailers-only responses):
 
 | Code | Name |
 |------|------|
@@ -159,6 +237,7 @@ You can also filter by flow type to find streaming RPCs:
 - **No decompression** -- compressed frames are stored in their compressed form; the `compressed` metadata flag indicates when decompression is needed
 - **HTTP/2 only** -- gRPC-Web over HTTP/1.1 is not supported
 - **Frame size limit** -- individual gRPC messages exceeding the configured maximum size are rejected
+- **Message recording limit** -- very long-running streams stop recording after a per-stream message limit; forwarding continues unaffected
 
 ## Related pages
 
