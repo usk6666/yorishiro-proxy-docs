@@ -26,7 +26,7 @@ Start an asynchronous fuzz campaign against a recorded flow.
 | `concurrency` | integer | No | `1` | Number of concurrent workers |
 | `rate_limit_rps` | number | No | `0` | Requests per second limit (0 = unlimited) |
 | `delay_ms` | integer | No | | Fixed delay between requests in ms |
-| `timeout_ms` | integer | No | `10000` | Per-request timeout in ms |
+| `timeout_ms` | integer | No | `30000` | Per-request timeout in ms |
 | `max_retries` | integer | No | `0` | Retry count per failed request |
 | `stop_on` | object | No | | Automatic stop conditions |
 | `tag` | string | No | | Tag to label the fuzz job |

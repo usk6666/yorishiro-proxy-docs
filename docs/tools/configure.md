@@ -126,10 +126,14 @@ Action types:
 
 ### budget
 
+Configures diagnostic session budget limits at runtime. Uses merge semantics by default -- only provided fields are updated, others remain unchanged. In replace mode, omitted fields reset to 0 (no limit).
+
+For full-replace semantics, use the `security` tool's `set_budget` action instead.
+
 | Field | Type | Description |
 |-------|------|-------------|
-| `max_total_requests` | integer | Max total requests for the session (0 to clear) |
-| `max_duration` | string | Max session duration, e.g. `"30m"` (`"0s"` to clear) |
+| `max_total_requests` | integer | Max total requests for the session. `0` means no limit |
+| `max_duration` | string | Max session duration as a Go duration string (e.g. `"30m"`, `"1h"`). `"0s"` means no limit |
 
 ### client_cert
 
