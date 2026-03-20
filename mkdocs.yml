@@ -106,6 +106,7 @@ nav:
       - HTTP/2: protocols/http2.md
       - gRPC: protocols/grpc.md
       - WebSocket: protocols/websocket.md
+      - SSE: protocols/sse.md
       - Raw TCP: protocols/raw-tcp.md
       - SOCKS5: protocols/socks5.md
   - Web UI:
