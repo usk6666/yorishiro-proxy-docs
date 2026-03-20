@@ -77,12 +77,91 @@ The `raw_bytes` field preserves the exact bytes as they appeared on the wire. Th
 
 ### Variant messages
 
-When a request or response is modified by intercept rules or auto-transform, the flow records both the original and modified versions as **variant messages**:
+When a request or response is modified by intercept rules or auto-transform, the flow records both the original and modified versions as **variant messages**. The variant value (`"original"` or `"modified"`) is stored in each message's `metadata` field. See [Variant recording](#variant-recording) above for details on sequencing and how request and response variants interact.
 
-- Sequence 0: `variant: "original"` -- the request as received from the client
-- Sequence 1: `variant: "modified"` -- the request as actually sent upstream
+## Scheme
 
-This lets you compare what the client sent versus what the proxy forwarded, which is useful for understanding how intercept and transform rules affected the traffic.
+The `scheme` field separates transport-layer information from the L7 protocol. While `protocol` tells you the application-level protocol (HTTP/1.x, HTTP/2, gRPC, WebSocket, Raw TCP), `scheme` tells you how the connection is transported -- whether it uses TLS (encrypted) or plaintext.
+
+| Scheme | Transport | Example protocols |
+|--------|-----------|-------------------|
+| `https` | TLS | HTTP/1.x, HTTP/2, gRPC over TLS |
+| `http` | Plaintext | HTTP/1.x, HTTP/2, gRPC over plaintext |
+| `wss` | TLS | WebSocket over TLS |
+| `ws` | Plaintext | WebSocket over plaintext |
+| `tcp` | Plaintext | Raw TCP |
+
+For example, a gRPC flow over TLS has `scheme: "https"` and `protocol: "gRPC"`. This separation lets you filter by transport independently of the L7 protocol.
+
+### Filtering by scheme
+
+Use the `scheme` filter to find flows by transport type. This is especially useful when you want all TLS traffic regardless of the L7 protocol:
+
+```json
+// query
+{
+  "resource": "flows",
+  "filter": {"scheme": "https"}
+}
+```
+
+This returns HTTP/1.x, HTTP/2, and gRPC flows over TLS. Note that WebSocket over TLS uses `scheme: "wss"`, not `"https"`.
+
+You can combine scheme with other filters:
+
+```json
+// query
+{
+  "resource": "flows",
+  "filter": {"scheme": "https", "method": "POST"}
+}
+```
+
+## Variant recording
+
+When intercept rules or auto-transform modify a request or response, yorishiro-proxy records both the original and modified versions as **variant messages**. This enables you to compare what the client sent versus what the proxy actually forwarded.
+
+### How variants work
+
+For a modified **request** (send direction):
+
+| Sequence | Variant | Description |
+|----------|---------|-------------|
+| N | `"original"` | The request as received from the client |
+| N+1 | `"modified"` | The request as actually sent upstream |
+
+For a modified **response** (receive direction):
+
+| Sequence | Variant | Description |
+|----------|---------|-------------|
+| N | `"original"` | The response as received from the upstream server |
+| N+1 | `"modified"` | The response as actually relayed to the client |
+
+The variant value is stored in the message's `metadata` field as `metadata.variant`. When no modification occurs, a single message is recorded without variant metadata.
+
+### When both request and response are modified
+
+If both send and receive are modified, the flow may contain four messages:
+
+1. Send original (sequence 0, `variant: "original"`)
+2. Send modified (sequence 1, `variant: "modified"`)
+3. Receive original (sequence 2, `variant: "original"`)
+4. Receive modified (sequence 3, `variant: "modified"`)
+
+The receive sequence numbers automatically adjust based on how many send messages were recorded.
+
+### Message metadata
+
+Each message has a `metadata` field that holds protocol-specific key-value pairs. Beyond variant tracking, metadata includes:
+
+| Key | Protocol | Description |
+|-----|----------|-------------|
+| `variant` | All | `"original"` or `"modified"` (only present when variants are recorded) |
+| `opcode` | WebSocket | Frame type: `Text`, `Binary`, `Close`, `Ping`, `Pong` |
+| `service` | gRPC | gRPC service name |
+| `method` | gRPC | gRPC method name |
+| `grpc_status` | gRPC | gRPC status code |
+| `grpc_encoding` | gRPC | Compression encoding (e.g., `gzip`) |
 
 ## Streaming protocols
 

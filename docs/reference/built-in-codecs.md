@@ -1,6 +1,6 @@
 # Built-in codecs
 
-yorishiro-proxy includes 14 built-in codecs for encoding, decoding, and hashing payloads. You can use these codecs in [Fuzzer](../features/fuzzer.md), [Resender](../features/resender.md), and [Macro](../features/macros.md) encoding chains to transform payloads before sending.
+yorishiro-proxy includes 14 built-in codecs for encoding, decoding, and hashing payloads, plus a specialized protobuf codec for gRPC message inspection. You can use the encoding chain codecs in [Fuzzer](../features/fuzzer.md), [Resender](../features/resender.md), and [Macro](../features/macros.md) to transform payloads before sending.
 
 ## Codec catalog
 
@@ -152,6 +152,39 @@ Converts all characters to uppercase.
 | Direction | Input | Output |
 |-----------|-------|--------|
 | Encode | `Hello World` | `HELLO WORLD` |
+
+## Protocol codecs
+
+Protocol codecs handle binary protocol formats. Unlike encoding chain codecs, these are used internally by the proxy to decode and re-encode protocol-specific payloads (e.g., when intercepting gRPC traffic).
+
+### protobuf
+
+Decodes Protocol Buffers wire format without requiring `.proto` schema files. Uses heuristic type inference to convert binary protobuf data to human-readable JSON and back, following the same approach as [PacketProxy](https://github.com/DeNA/PacketProxy).
+
+**gRPC frame support**: Handles the 5-byte gRPC length-prefixed framing format (1 byte compressed flag + 4 bytes big-endian message length + payload). When you intercept a gRPC request or response, the proxy automatically strips the gRPC framing, decodes the protobuf payload to JSON for editing, and re-encodes it with proper framing on forward.
+
+**Compression support**: Supports gzip, deflate, snappy, and zstd compressed gRPC messages. When the `grpc-encoding` header indicates compression, the payload is decompressed before protobuf decoding and re-compressed after encoding.
+
+**JSON key format**: Decoded fields use the format `"field_number:ordinal:type"` (e.g., `"0001:0000:Varint"`, `"0002:0001:String"`, `"0003:0002:embedded message"`).
+
+**Type inference priority** for length-delimited fields:
+
+1. UTF-8 printable string
+2. Embedded protobuf message (recursive)
+3. Packed repeated varints
+4. Raw bytes (hex)
+
+**Example**: A gRPC message with field 1 = `"hello"` and field 2 = `42` decodes to:
+
+```json
+{
+  "0001:0000:String": "hello",
+  "0002:0001:Varint": 42
+}
+```
+
+!!! note "Not available in encoding chains"
+    The protobuf codec is used internally for gRPC intercept and inspection. It is not available as a named codec in fuzzer/resender/macro encoding chains.
 
 ## Encoding chains
 
