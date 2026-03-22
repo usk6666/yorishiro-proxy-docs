@@ -110,7 +110,7 @@ yorishiro-proxy install [target] [flags]
 | `mcp` | Register MCP configuration only |
 | `ca` | Generate CA certificate only |
 | `skills` | Install Claude Code skills only |
-| `playwright` | Configure Playwright integration only |
+| `playwright` | Configure Playwright integration (auto-detects browser, installs if needed, applies `--no-sandbox` in containers) |
 
 #### Flags
 
