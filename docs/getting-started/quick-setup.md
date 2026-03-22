@@ -31,7 +31,7 @@ You can run specific setup targets independently:
 | `yorishiro-proxy install mcp` | Configure MCP server integration only |
 | `yorishiro-proxy install ca` | Generate the CA certificate only |
 | `yorishiro-proxy install skills` | Install Claude Code skills only |
-| `yorishiro-proxy install playwright` | Set up playwright-cli integration only |
+| `yorishiro-proxy install playwright` | Set up playwright-cli integration (auto-detects browser, installs if needed) |
 
 For example, to generate the CA certificate and register it in your OS trust store without touching MCP configuration:
 

@@ -7,7 +7,7 @@ Macros let you define multi-step workflows that execute a sequence of HTTP reque
 A macro consists of:
 
 - **Steps** -- ordered HTTP requests based on recorded flows
-- **KV Store** -- a key-value store for passing data between steps via `{{variable}}` templates
+- **KV Store** -- a key-value store for passing data between steps via `§variable§` templates
 - **Extraction rules** -- rules to extract values from responses into the KV Store
 - **Guards** -- conditions that control whether a step executes
 
@@ -26,7 +26,7 @@ Use the `define_macro` action to save a macro definition. If a macro with the sa
       {
         "id": "login",
         "flow_id": "recorded-login-flow",
-        "override_body": "username=admin&password={{password}}",
+        "override_body": "username=admin&password=§password§",
         "extract": [
           {
             "name": "session_cookie",
@@ -41,7 +41,7 @@ Use the `define_macro` action to save a macro definition. If a macro with the sa
       {
         "id": "get-csrf",
         "flow_id": "recorded-csrf-flow",
-        "override_headers": {"Cookie": "PHPSESSID={{session_cookie}}"},
+        "override_headers": {"Cookie": "PHPSESSID=§session_cookie§"},
         "extract": [
           {
             "name": "csrf_token",
@@ -67,7 +67,7 @@ Each step specifies a recorded flow as a template and optional mutations:
 | `id` | string | Unique step identifier (required) |
 | `flow_id` | string | Recorded flow to use as template (required) |
 | `override_method` | string | Override HTTP method |
-| `override_url` | string | Override request URL (supports `{{variable}}` templates) |
+| `override_url` | string | Override request URL (supports `§variable§` templates) |
 | `override_headers` | object | Header overrides (supports templates) |
 | `override_body` | string | Override request body (supports templates) |
 | `on_error` | string | Error handling: `"abort"` (default), `"skip"`, `"retry"` |
@@ -153,18 +153,18 @@ Extraction rules pull values from responses and store them in the KV Store for u
 
 ## Template expansion
 
-Use `{{variable}}` syntax in `override_url`, `override_headers`, and `override_body` to reference KV Store values:
+Use `§variable§` syntax in `override_url`, `override_headers`, and `override_body` to reference KV Store values:
 
 ```json
 {
   "id": "api-call",
   "flow_id": "api-flow",
-  "override_url": "https://api.target.com/v1/users/{{user_id}}",
+  "override_url": "https://api.target.com/v1/users/§user_id§",
   "override_headers": {
-    "Authorization": "Bearer {{access_token}}",
-    "Cookie": "session={{session_cookie}}"
+    "Authorization": "Bearer §access_token§",
+    "Cookie": "session=§session_cookie§"
   },
-  "override_body": "{\"csrf\": \"{{csrf_token}}\"}"
+  "override_body": "{\"csrf\": \"§csrf_token§\"}"
 }
 ```
 
@@ -339,7 +339,7 @@ This example demonstrates a complete authentication flow:
       {
         "id": "login",
         "flow_id": "login-flow-id",
-        "override_body": "{\"username\":\"{{username}}\",\"password\":\"{{password}}\"}",
+        "override_body": "{\"username\":\"§username§\",\"password\":\"§password§\"}",
         "extract": [
           {
             "name": "access_token",
@@ -360,7 +360,7 @@ This example demonstrates a complete authentication flow:
         "id": "get-profile",
         "flow_id": "profile-flow-id",
         "override_headers": {
-          "Authorization": "Bearer {{access_token}}"
+          "Authorization": "Bearer §access_token§"
         },
         "when": {
           "step": "login",
@@ -378,9 +378,9 @@ This example demonstrates a complete authentication flow:
       {
         "id": "admin-action",
         "flow_id": "admin-flow-id",
-        "override_url": "https://api.target.com/admin/users/{{user_id}}",
+        "override_url": "https://api.target.com/admin/users/§user_id§",
         "override_headers": {
-          "Authorization": "Bearer {{access_token}}"
+          "Authorization": "Bearer §access_token§"
         },
         "when": {
           "step": "get-profile",

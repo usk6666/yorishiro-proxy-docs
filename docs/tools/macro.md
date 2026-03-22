@@ -34,7 +34,7 @@ Each step defines a request to send:
 | `id` | string | Yes | | Unique step identifier |
 | `flow_id` | string | Yes | | Recorded flow to use as template |
 | `override_method` | string | No | | Override HTTP method |
-| `override_url` | string | No | | Override request URL (supports `{{variable}}` templates) |
+| `override_url` | string | No | | Override request URL (supports `§variable§` templates) |
 | `override_headers` | object | No | | Header overrides as key-value pairs (supports templates) |
 | `override_body` | string | No | | Override request body (supports templates) |
 | `on_error` | string | No | `"abort"` | Error handling: `"abort"`, `"skip"`, or `"retry"` |
@@ -136,7 +136,7 @@ Remove a stored macro definition.
       {
         "id": "login",
         "flow_id": "recorded-login-flow",
-        "override_body": "username=admin&password={{password}}",
+        "override_body": "username=admin&password=§password§",
         "extract": [
           {
             "name": "session_cookie",
@@ -151,7 +151,7 @@ Remove a stored macro definition.
       {
         "id": "get-csrf",
         "flow_id": "recorded-csrf-flow",
-        "override_headers": {"Cookie": "PHPSESSID={{session_cookie}}"},
+        "override_headers": {"Cookie": "PHPSESSID=§session_cookie§"},
         "extract": [
           {
             "name": "csrf_token",

@@ -54,7 +54,7 @@ Each macro consists of one or more steps. Each step specifies:
 
 Each step can define extraction rules to capture values from the response for use in subsequent steps. Each extraction rule specifies:
 
-- **Variable name** -- Name to store the extracted value (referenced as `{{variable_name}}` in later steps)
+- **Variable name** -- Name to store the extracted value (referenced as `§variable_name§` in later steps)
 - **From** -- Whether to extract from the request or response
 - **Source** -- Where to find the value:
     - **Header** -- Extract from a specific header

@@ -46,7 +46,20 @@ If you have playwright-cli installed, you can capture browser traffic without ma
 
 ### Step 1: Configure playwright-cli
 
-Create `.playwright/cli.config.json` in your project root:
+Run `install playwright` to auto-detect your system browser and generate the configuration:
+
+```bash
+yorishiro-proxy install playwright
+```
+
+This command:
+
+- **Auto-detects** an installed browser (priority: chromium > firefox > chrome)
+- **Generates** `.playwright/cli.config.json` with the detected browser settings
+- **Auto-installs** the browser via `npx playwright install` if not found
+- **Applies `--no-sandbox`** automatically in container environments (Docker, Codespaces, Gitpod)
+
+The generated configuration looks like this (values depend on your environment):
 
 ```json
 {
@@ -66,6 +79,8 @@ Create `.playwright/cli.config.json` in your project root:
 ```
 
 The `ignoreHTTPSErrors: true` option bypasses SSL certificate errors, so you do not need to install the CA certificate when using playwright-cli.
+
+You can also create or edit this file manually if you need a specific browser or custom settings.
 
 ### Step 2: Start the proxy
 
