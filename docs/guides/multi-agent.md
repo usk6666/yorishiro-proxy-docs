@@ -4,15 +4,15 @@ yorishiro-proxy supports simultaneous connections from multiple AI agents throug
 
 ## How it works
 
-By default, yorishiro-proxy communicates over stdin/stdout (stdio transport), which limits it to a single MCP client. Enabling the Streamable HTTP transport (`-mcp-http-addr`) allows multiple agents to connect over HTTP, sharing the same proxy instance, flow store, and configuration.
+By default, yorishiro-proxy starts an HTTP MCP transport on a random loopback port, allowing multiple agents to connect over HTTP and share the same proxy instance, flow store, and configuration. To use a fixed address for sharing, specify `-mcp-http-addr`.
 
 The Streamable HTTP endpoint also serves the embedded Web UI, so you get both multi-agent MCP access and a visual dashboard on the same address.
 
 ## Setting up Streamable HTTP
 
-### Enable the HTTP transport
+### Use a fixed HTTP MCP address
 
-Add `-mcp-http-addr` to your `.mcp.json` configuration:
+By default, the HTTP MCP transport listens on a random port. For multi-agent setups, use a fixed address with `-mcp-http-addr`:
 
 ```json
 {
@@ -20,6 +20,8 @@ Add `-mcp-http-addr` to your `.mcp.json` configuration:
     "yorishiro-proxy": {
       "command": "/path/to/bin/yorishiro-proxy",
       "args": [
+        "server",
+        "-stdio-mcp",
         "-insecure",
         "-log-file", "/tmp/yorishiro-proxy.log",
         "-mcp-http-addr", "127.0.0.1:3000"
@@ -45,6 +47,8 @@ By default, the token is regenerated on each launch. To use a stable token that 
     "yorishiro-proxy": {
       "command": "/path/to/bin/yorishiro-proxy",
       "args": [
+        "server",
+        "-stdio-mcp",
         "-insecure",
         "-log-file", "/tmp/yorishiro-proxy.log",
         "-mcp-http-addr", "127.0.0.1:3000",

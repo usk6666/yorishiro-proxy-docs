@@ -57,22 +57,22 @@ Add to your MCP client configuration (e.g., `.mcp.json` for Claude Code):
   "mcpServers": {
     "yorishiro-proxy": {
       "command": "/path/to/bin/yorishiro-proxy",
-      "args": []
+      "args": ["server", "-stdio-mcp"]
     }
   }
 }
 ```
 
-The proxy starts as an MCP server on stdin/stdout. The CA certificate is automatically generated on first run and persisted to `~/.yorishiro-proxy/ca/`.
+The proxy starts as an MCP server with stdio transport for Claude Code integration. The CA certificate is automatically generated on first run and persisted to `~/.yorishiro-proxy/ca/`. An HTTP MCP transport with the Web UI is also started by default on a random loopback port.
 
-To also enable the Web UI, add the `-mcp-http-addr` flag:
+To use a fixed HTTP MCP address (e.g., for multi-agent sharing or direct Web UI access):
 
 ```json
 {
   "mcpServers": {
     "yorishiro-proxy": {
       "command": "/path/to/bin/yorishiro-proxy",
-      "args": ["-mcp-http-addr", "127.0.0.1:3000"]
+      "args": ["server", "-stdio-mcp", "-mcp-http-addr", "127.0.0.1:3000"]
     }
   }
 }
@@ -128,7 +128,7 @@ See the [Protocols](protocols/http.md) section for detailed documentation on eac
 
 ## Web UI
 
-When Streamable HTTP mode is enabled (`-mcp-http-addr`), the embedded Web UI is served at the same address.
+The embedded Web UI is served at the HTTP MCP address (enabled by default on a random loopback port). Use `-mcp-http-addr` to set a fixed address.
 
 | Page | Description |
 |------|-------------|

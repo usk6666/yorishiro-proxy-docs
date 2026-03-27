@@ -37,7 +37,7 @@ For MITM to work, the client must trust the proxy's CA certificate. yorishiro-pr
 Provide your own CA certificate and private key:
 
 ```bash
-yorishiro-proxy -ca-cert /path/to/ca.crt -ca-key /path/to/ca.key
+yorishiro-proxy server -ca-cert /path/to/ca.crt -ca-key /path/to/ca.key
 ```
 
 ### Ephemeral CA
@@ -45,7 +45,7 @@ yorishiro-proxy -ca-cert /path/to/ca.crt -ca-key /path/to/ca.key
 Generate a temporary CA that exists only for the session:
 
 ```bash
-yorishiro-proxy -ca-ephemeral
+yorishiro-proxy server -ca-ephemeral
 ```
 
 This is useful for quick testing but requires re-installing the CA certificate each time the proxy restarts.
