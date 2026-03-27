@@ -87,7 +87,7 @@ If you do not want to persist the CA certificate to disk, use the `-ca-ephemeral
   "mcpServers": {
     "yorishiro-proxy": {
       "command": "/path/to/bin/yorishiro-proxy",
-      "args": ["-ca-ephemeral"]
+      "args": ["server", "-stdio-mcp", "-ca-ephemeral"]
     }
   }
 }

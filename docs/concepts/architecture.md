@@ -110,7 +110,7 @@ Recording uses a **progressive** pattern: the request (send) message is recorded
 
 ## Web UI and MCP transport
 
-When you enable Streamable HTTP mode (`-mcp-http-addr`), the proxy serves both the MCP API and the embedded Web UI on the same address. The Web UI is a React/Vite single-page application that communicates with the backend exclusively through MCP over Streamable HTTP -- the same protocol used by AI agents.
+By default, the proxy starts an HTTP MCP transport on a random loopback port, serving both the MCP API and the embedded Web UI on the same address. Use `-mcp-http-addr` to set a fixed address. The Web UI is a React/Vite single-page application that communicates with the backend exclusively through MCP over Streamable HTTP -- the same protocol used by AI agents.
 
 ```mermaid
 flowchart LR

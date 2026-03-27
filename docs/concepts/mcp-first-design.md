@@ -85,37 +85,49 @@ Many tools use an **action pattern** where a single tool handles multiple relate
 
 ### Direct integration with Claude Code
 
-The most common pattern is running yorishiro-proxy as a stdio MCP server in Claude Code's `.mcp.json`:
+The most common pattern is running yorishiro-proxy as an MCP server in Claude Code's `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "yorishiro-proxy": {
       "command": "/path/to/yorishiro-proxy",
-      "args": []
+      "args": ["server", "-stdio-mcp"]
     }
   }
 }
 ```
 
-Claude Code communicates with the proxy over stdin/stdout using the MCP protocol. The agent has full control over starting the proxy, capturing traffic, and running security tests.
+Claude Code communicates with the proxy over stdin/stdout using the MCP protocol. The agent has full control over starting the proxy, capturing traffic, and running security tests. An HTTP MCP transport with the Web UI is also started by default on a random loopback port.
+
+### CLI client access
+
+The `client` subcommand provides direct CLI access to MCP tools on a running server, useful for scripting and ad-hoc operations:
+
+```bash
+yorishiro-proxy client query resource=status
+yorishiro-proxy client proxy_start listen_addr=127.0.0.1:8080
+yorishiro-proxy client query resource=flows limit=10 filter.method=POST
+```
+
+The client auto-discovers the server via `~/.yorishiro-proxy/server.json`, which is written by the server on startup.
 
 ### Multi-agent shared access
 
-When multiple agents need to work with the same proxy instance, you enable Streamable HTTP transport:
+By default, the HTTP MCP transport is enabled on a random loopback port. To use a fixed address for multi-agent sharing, specify `-mcp-http-addr`:
 
 ```json
 {
   "mcpServers": {
     "yorishiro-proxy": {
       "command": "/path/to/yorishiro-proxy",
-      "args": ["-mcp-http-addr", "127.0.0.1:3000"]
+      "args": ["server", "-stdio-mcp", "-mcp-http-addr", "127.0.0.1:3000"]
     }
   }
 }
 ```
 
-Other agents can then connect to `http://127.0.0.1:3000` using Streamable HTTP MCP with Bearer token authentication. Multiple agents can query flows, run fuzz campaigns, and inspect traffic simultaneously against the same proxy instance.
+Other agents can connect to `http://127.0.0.1:3000` using Streamable HTTP MCP with Bearer token authentication. Multiple agents can query flows, run fuzz campaigns, and inspect traffic simultaneously against the same proxy instance.
 
 ### Human + AI collaboration
 
@@ -136,7 +148,7 @@ Streamable HTTP is the MCP transport used for networked access. Unlike stdio (wh
 - **Shared state**: All clients see the same flows, configuration, and proxy state
 - **Web UI co-hosting**: The embedded React/Vite Web UI is served from the same address
 
-When you start the proxy with `-mcp-http-addr 127.0.0.1:3000`, the startup log prints the access URL with the authentication token:
+When the HTTP MCP transport starts (enabled by default), the startup log prints the access URL with the authentication token:
 
 ```
 WebUI available url=http://127.0.0.1:3000/?token=<random-token>
@@ -150,7 +162,7 @@ A REST API would require maintaining two interfaces (MCP + REST) with the same c
 
 ### Why not a CLI?
 
-CLI commands are designed for human interaction: formatted output, flags, interactive prompts. MCP tools are designed for programmatic interaction: structured JSON in and out. Since the primary user is an AI agent, MCP is the natural fit. Humans interact through the Web UI, which provides a better visual experience than a CLI would.
+MCP tools are designed for programmatic interaction: structured JSON in and out. Since the primary user is an AI agent, MCP is the natural fit. The `client` subcommand bridges the gap for human operators, providing CLI access to the same MCP tools with key-value parameters and formatted output (JSON, table, or raw). Humans can also interact through the Web UI for a richer visual experience.
 
 ## Related pages
 
