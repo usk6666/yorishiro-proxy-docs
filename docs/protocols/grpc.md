@@ -188,6 +188,6 @@ The Layer's compression policy is strict. v1 supports only `identity` (no-op) an
 - [HTTP/2](http2.md) -- the transport layer for gRPC
 - [gRPC-Web](grpc-web.md) -- browser-style gRPC sharing the same `GRPCStart`/`Data`/`End` Message types
 - [HTTPS MITM](https-mitm.md) -- TLS interception for gRPC over TLS
-- [resend](../tools/resend.md) -- replay a gRPC envelope (`resend_grpc` typed variant)
-- [fuzz](../tools/fuzz.md) -- mutate and replay gRPC envelopes (`fuzz_grpc` typed variant)
+- [resend_grpc](../tools/resend-grpc.md) -- replay a gRPC envelope
+- [fuzz_grpc](../tools/fuzz-grpc.md) -- mutate and replay gRPC envelopes
 - [Plugin hook reference](../plugins/hook-reference.md) -- full hook documentation

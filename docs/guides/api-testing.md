@@ -72,7 +72,7 @@ The response includes full request/response headers, body, status code, and timi
 Test authorization boundaries by replacing the Bearer token with another user's token:
 
 ```json
-// resend
+// resend_http
 {
   "action": "resend",
   "params": {
@@ -90,7 +90,7 @@ Test authorization boundaries by replacing the Bearer token with another user's 
 Test what happens when you remove the authentication header entirely:
 
 ```json
-// resend
+// resend_http
 {
   "action": "resend",
   "params": {
@@ -106,7 +106,7 @@ Test what happens when you remove the authentication header entirely:
 Test multiple authentication scenarios at once:
 
 ```json
-// fuzz
+// fuzz_http
 {
   "action": "fuzz",
   "params": {
@@ -144,7 +144,7 @@ Test multiple authentication scenarios at once:
 Use a low-privilege user's token on admin endpoints:
 
 ```json
-// resend
+// resend_http
 {
   "action": "resend",
   "params": {
@@ -157,18 +157,19 @@ Use a low-privilege user's token on admin endpoints:
 }
 ```
 
-Compare the responses:
+Compare the two responses by retrieving each flow and performing a structural diff on the client side:
 
 ```json
-// resend
-{
-  "action": "compare",
-  "params": {
-    "flow_id_a": "<admin-response-flow-id>",
-    "flow_id_b": "<regular-user-response-flow-id>"
-  }
-}
+// query
+{"resource": "flow", "id": "<admin-response-flow-id>"}
 ```
+
+```json
+// query
+{"resource": "flow", "id": "<regular-user-response-flow-id>"}
+```
+
+Diff the response bodies and status codes locally to identify authorization differences.
 
 ## Parameter tampering
 
@@ -177,7 +178,7 @@ Compare the responses:
 Modify specific fields in a JSON request body using JSON path patches:
 
 ```json
-// resend
+// resend_http
 {
   "action": "resend",
   "params": {
@@ -196,7 +197,7 @@ Modify specific fields in a JSON request body using JSON path patches:
 Change the target URL to access different resources:
 
 ```json
-// resend
+// resend_http
 {
   "action": "resend",
   "params": {
@@ -212,7 +213,7 @@ Change the target URL to access different resources:
 Test if the server accepts different HTTP methods:
 
 ```json
-// resend
+// resend_http
 {
   "action": "resend",
   "params": {
@@ -228,7 +229,7 @@ Test if the server accepts different HTTP methods:
 Enumerate object IDs to find insecure direct object references:
 
 ```json
-// fuzz
+// fuzz_http
 {
   "action": "fuzz",
   "params": {
@@ -267,7 +268,7 @@ Filter results to find successful accesses:
 When the API expects encoded input, use codec chains to encode payloads before injection:
 
 ```json
-// fuzz
+// fuzz_http
 {
   "action": "fuzz",
   "params": {
@@ -303,7 +304,7 @@ Available codecs include `base64`, `url_encode_query`, `url_encode_path`, `hex`,
 Configure automatic stop conditions to terminate the fuzz job when anomalies are detected:
 
 ```json
-// fuzz
+// fuzz_http
 {
   "action": "fuzz",
   "params": {
@@ -353,19 +354,19 @@ The job stops automatically when response latency exceeds the threshold, indicat
 ### Pause and resume
 
 ```json
-// fuzz
+// fuzz_http
 {"action": "fuzz_pause", "params": {"fuzz_id": "<fuzz-id>"}}
 ```
 
 ```json
-// fuzz
+// fuzz_http
 {"action": "fuzz_resume", "params": {"fuzz_id": "<fuzz-id>"}}
 ```
 
 ### Cancel a job
 
 ```json
-// fuzz
+// fuzz_http
 {"action": "fuzz_cancel", "params": {"fuzz_id": "<fuzz-id>"}}
 ```
 
@@ -432,5 +433,5 @@ HAR files are compatible with browser DevTools, Burp Suite, and OWASP ZAP.
 - [Vulnerability assessment](vulnerability-assessment.md) -- full assessment workflow
 - [Resender](../features/resender.md) -- resender feature reference
 - [Fuzzer](../features/fuzzer.md) -- fuzzer feature reference
-- [resend tool](../tools/resend.md) -- resend tool reference
-- [fuzz tool](../tools/fuzz.md) -- fuzz tool reference
+- [resend_http](../tools/resend-http.md), [resend_ws](../tools/resend-ws.md), [resend_grpc](../tools/resend-grpc.md), [resend_raw](../tools/resend-raw.md) -- typed per-protocol resend MCP tools
+- [fuzz_http](../tools/fuzz-http.md), [fuzz_ws](../tools/fuzz-ws.md), [fuzz_grpc](../tools/fuzz-grpc.md), [fuzz_raw](../tools/fuzz-raw.md) -- typed per-protocol fuzz MCP tools

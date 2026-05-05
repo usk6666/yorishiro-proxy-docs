@@ -6,7 +6,7 @@ The Settings page provides a tabbed interface for configuring all aspects of the
 
 ## Tabs
 
-The Settings page is organized into 12 tabs:
+The Settings page is organized into 11 tabs:
 
 | Tab | Description |
 |-----|-------------|
@@ -21,7 +21,6 @@ The Settings page is organized into 12 tabs:
 | **Client Certificate** | mTLS client certificate configuration |
 | **Connection** | Connection timeouts and limits |
 | **CA Certificate** | CA certificate management |
-| **Plugins** | Starlark plugin management |
 
 ## Proxy
 
@@ -145,11 +144,7 @@ Manage the proxy's Certificate Authority used for TLS interception:
 
 ## Plugins
 
-Manage Starlark plugins loaded into the proxy:
-
-- **Plugin list** -- Shows all loaded plugins with their name, status (enabled/disabled), and file path
-- **Enable/Disable** -- Toggle individual plugins on or off
-- **Reload** -- Reload a plugin's Starlark script from disk to pick up changes
+Plugin management is no longer in Settings. The read-only Plugins view is at the `/plugins` route. Plugins load once at proxy boot from `config.plugins`; to change the loaded set, edit the config and restart the proxy.
 
 ## Related pages
 
@@ -159,4 +154,4 @@ Manage Starlark plugins loaded into the proxy:
 - [CA certificate](../getting-started/ca-certificate.md) -- CA certificate installation guide
 - [proxy_start tool](../tools/proxy-start.md) -- MCP tool for starting listeners
 - [configure tool](../tools/configure.md) -- MCP tool for configuration changes
-- [plugin tool](../tools/plugin.md) -- MCP tool for plugin management
+- [plugin_introspect tool](../tools/plugin-introspect.md) -- read-only MCP tool for plugin introspection

@@ -9,7 +9,6 @@ The resender lets you replay recorded proxy requests with optional mutations. Yo
 | `resend` | Resend an HTTP/HTTP2/WebSocket request with optional mutations |
 | `resend_raw` | Resend raw bytes over TCP/TLS with byte-level patches |
 | `tcp_replay` | Replay a Raw TCP flow by sending all send messages sequentially |
-| `compare` | Compare two flows structurally (see [Comparer](comparer.md)) |
 
 ## Resending with overrides
 
@@ -398,7 +397,6 @@ Use raw resend with text patches to test for request smuggling:
 
 ## Related pages
 
-- [Resend tool reference](../tools/resend.md) -- MCP tool parameter reference
+- [resend_http](../tools/resend-http.md), [resend_ws](../tools/resend-ws.md), [resend_grpc](../tools/resend-grpc.md), [resend_raw](../tools/resend-raw.md) -- typed per-protocol resend MCP tools
 - [Fuzzer](fuzzer.md) -- Automated fuzzing with payload injection
-- [Comparer](comparer.md) -- Compare responses from resend operations
 - [Macros](macros.md) -- Hook integration for multi-step workflows

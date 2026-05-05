@@ -104,5 +104,5 @@ The Layer reuses the original `Envelope.Protocol` to pick the correct wire forma
 - [gRPC](grpc.md) — native gRPC over HTTP/2 sharing the same Message types
 - [HTTP/1.x](http.md) — one of the underlying transports
 - [HTTP/2](http2.md) — the other underlying transport (folded by `httpaggregator/`)
-- [resend](../tools/resend.md) — replay an envelope (`resend_grpc` typed variant)
-- [fuzz](../tools/fuzz.md) — mutate and replay envelopes (`fuzz_grpc` typed variant)
+- [resend_grpc](../tools/resend-grpc.md) — replay an envelope (gRPC-Web reuses the gRPC tools)
+- [fuzz_grpc](../tools/fuzz-grpc.md) — mutate and replay envelopes (gRPC-Web reuses the gRPC tools)

@@ -163,6 +163,6 @@ The Layer respects `server_no_context_takeover` and `client_no_context_takeover`
 - [HTTPS MITM](https-mitm.md) -- WSS connections through TLS tunnels
 - [Intercept feature](../features/intercept.md) -- intercept rules and the WebSocket frame phase
 - [WebUI: Intercept](../webui/intercept.md) -- managing intercepted WebSocket frames in the UI
-- [resend](../tools/resend.md) -- replay an envelope (per-protocol typed variants for WebSocket)
-- [fuzz](../tools/fuzz.md) -- mutate and replay envelopes (per-protocol typed variants for WebSocket)
+- [resend_ws](../tools/resend-ws.md) -- replay a WebSocket message frame
+- [fuzz_ws](../tools/fuzz-ws.md) -- mutate and replay WebSocket message frames
 - [Plugin hook reference](../plugins/hook-reference.md) -- detailed hook documentation

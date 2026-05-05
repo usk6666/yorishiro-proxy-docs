@@ -500,7 +500,6 @@ The fuzzer supports the same pre/post hook system as the resender. Use hooks to 
 
 ## Related pages
 
-- [Fuzz tool reference](../tools/fuzz.md) -- MCP tool parameter reference
+- [fuzz_http](../tools/fuzz-http.md), [fuzz_ws](../tools/fuzz-ws.md), [fuzz_grpc](../tools/fuzz-grpc.md), [fuzz_raw](../tools/fuzz-raw.md) -- typed per-protocol fuzz MCP tools
 - [Resender](resender.md) -- Single request resend with mutations
-- [Comparer](comparer.md) -- Compare fuzz results against baselines
 - [Built-in codecs](../reference/built-in-codecs.md) -- Available encoding codecs
