@@ -199,26 +199,20 @@ When you specify `encoding: ["base64", "url_encode_query"]`:
 
 ### Usage in MCP tools
 
-Specify encoding chains in the `encoding` parameter of fuzzer payload sets, resender body patches, or macro steps:
+Specify encoding chains in the `encoding` parameter on resender `body_patches` or macro steps. The typed fuzz tools (`fuzz_http`, `fuzz_ws`, `fuzz_grpc`, `fuzz_raw`) only accept a single per-position encoding (`"text"` or `"base64"`), so for multi-codec chains pre-encode the payloads from the client side. To inject a base64 payload at a position:
 
 ```json
-// fuzz
+// fuzz_http
 {
   "flow_id": "abc123",
   "positions": [
     {
-      "location": "body",
-      "name": "payload",
-      "start": 10,
-      "end": 20
-    }
-  ],
-  "payload_sets": [
-    {
-      "name": "payload",
-      "type": "wordlist",
-      "values": ["<script>alert(1)</script>", "' OR 1=1 --"],
-      "encoding": ["base64"]
+      "path": "body",
+      "encoding": "base64",
+      "payloads": [
+        "PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+        "JyBPUiAxPTEgLS0="
+      ]
     }
   ]
 }

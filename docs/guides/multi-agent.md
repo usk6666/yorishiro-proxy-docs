@@ -115,36 +115,30 @@ One common pattern is to divide testing responsibilities across agents:
 **Agent B** -- runs fuzzing campaigns on captured flows:
 
 ```json
-// fuzz
+// fuzz_http
 {
-  "action": "fuzz",
-  "params": {
-    "flow_id": "<flow-id-from-agent-a>",
-    "attack_type": "sequential",
-    "positions": [
-      {
-        "id": "pos-0",
-        "location": "body_json",
-        "json_path": "$.user_id",
-        "payload_set": "ids"
-      }
-    ],
-    "payload_sets": {
-      "ids": {"type": "range", "start": 1, "end": 100}
-    },
-    "tag": "agent-b-idor"
-  }
+  "flow_id": "<flow-id-from-agent-a>",
+  "positions": [
+    {
+      "path": "body",
+      "payloads": [
+        "{\"user_id\":1}",
+        "{\"user_id\":2}",
+        "{\"user_id\":3}"
+      ]
+    }
+  ],
+  "tag": "agent-b-idor"
 }
 ```
 
-**Agent C** -- reviews results and performs targeted resends:
+**Agent C** -- reviews variant streams and performs targeted resends:
 
 ```json
 // query
 {
-  "resource": "fuzz_results",
-  "fuzz_id": "<fuzz-id>",
-  "filter": {"outliers_only": true}
+  "resource": "stream",
+  "id": "<variant-stream-id>"
 }
 ```
 

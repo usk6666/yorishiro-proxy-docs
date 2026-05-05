@@ -152,39 +152,31 @@ For streaming protocols (WebSocket, gRPC, HTTP/2), flows contain multiple messag
 Replay a captured request as-is:
 
 ```json
-// resend
+// resend_http
 {
-  "action": "resend",
-  "params": {
-    "flow_id": "<flow-id>"
-  }
+  "flow_id": "<flow-id>"
 }
 ```
 
 Or resend with modifications -- for example, changing a header:
 
 ```json
-// resend
+// resend_http
 {
-  "action": "resend",
-  "params": {
-    "flow_id": "<flow-id>",
-    "override_headers": {"Authorization": "Bearer <different-token>"}
-  }
+  "flow_id": "<flow-id>",
+  "headers": [
+    {"name": "Authorization", "value": "Bearer <different-token>"}
+  ]
 }
 ```
 
-Use `"dry_run": true` to preview changes without sending:
+To preview changes, modify the method and inspect the new stream after the call:
 
 ```json
-// resend
+// resend_http
 {
-  "action": "resend",
-  "params": {
-    "flow_id": "<flow-id>",
-    "override_method": "PUT",
-    "dry_run": true
-  }
+  "flow_id": "<flow-id>",
+  "method": "PUT"
 }
 ```
 
