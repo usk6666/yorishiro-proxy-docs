@@ -1,15 +1,8 @@
 # Resender
 
-The Resender page lets you edit and resend captured requests, supporting both HTTP and TCP protocols. You can modify any part of a request, preview changes with dry-run mode, and compare responses side by side.
+The Resender page lets you edit and resend captured requests, supporting both HTTP and TCP protocols. You can modify any part of a request and preview changes with dry-run mode.
 
 ![Resender](../images/webui_resender.png)
-
-## Page modes
-
-The top of the page has two mode tabs:
-
-- **Resend** -- The main request editor and sender
-- **Compare** -- Side-by-side response comparison tool
 
 ## Loading a flow
 
@@ -134,5 +127,4 @@ Below the editor, a history list records all resend operations from the current 
 ## Related pages
 
 - [Resender feature](../features/resender.md) -- Detailed resender documentation
-- [resend tool](../tools/resend.md) -- MCP tool reference
-- [Comparer](../features/comparer.md) -- Response comparison feature
+- [resend_http](../tools/resend-http.md), [resend_ws](../tools/resend-ws.md), [resend_grpc](../tools/resend-grpc.md), [resend_raw](../tools/resend-raw.md) -- typed per-protocol resend MCP tools

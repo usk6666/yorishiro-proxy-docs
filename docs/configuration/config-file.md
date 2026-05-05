@@ -36,8 +36,7 @@ The config file is a single JSON object with the following top-level sections:
   "socks5_password": "",
   "target_scope_policy": {},
   "safety_filter": {},
-  "plugins": [],
-  "codec_plugins": []
+  "plugins": []
 }
 ```
 
@@ -444,21 +443,6 @@ Configure Starlark-based plugins for the proxy pipeline. Each entry specifies a 
 
 For details on writing plugins, see the [plugin development guide](../plugins/overview.md).
 
-## Codec plugins (`codec_plugins`)
-
-Configure Starlark-based custom codec plugins. Each entry specifies a path to a Starlark codec file or a directory containing `*.star` codec files. Codec plugins are registered alongside built-in codecs.
-
-```json
-{
-  "codec_plugins": [
-    {"path": "/path/to/custom-codec.star"},
-    {"path": "/path/to/codec-directory/"}
-  ]
-}
-```
-
-For details on codec plugins, see the [codec plugins guide](../plugins/codec-plugins.md).
-
 ## Configuration examples
 
 ### Minimal configuration
@@ -601,9 +585,6 @@ A comprehensive configuration demonstrating all available sections:
       "hooks": ["on_request", "on_response"],
       "on_error": "log"
     }
-  ],
-  "codec_plugins": [
-    {"path": "/path/to/custom-codec.star"}
   ]
 }
 ```

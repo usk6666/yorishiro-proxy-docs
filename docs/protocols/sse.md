@@ -1,12 +1,14 @@
 # SSE (Server-Sent Events)
 
-yorishiro-proxy detects and handles Server-Sent Events (SSE) responses at the event level. Each SSE event is parsed, recorded as a separate flow message, and forwarded to the client with output filter support.
+yorishiro-proxy detects and handles Server-Sent Events (SSE) responses at the event level. The SSE Layer (`internal/layer/sse/`) wraps the response side of an HTTP/1.x exchange whose body is a `text/event-stream` and re-shapes the byte stream into one `SSEMessage` envelope per parsed event.
+
+L7 structured view: yes. L4 raw bytes: yes. Per-event envelopes flow through a streaming-aware Pipeline.
 
 ## How detection works
 
-SSE detection happens at the HTTP response level. When the upstream server returns a response with `Content-Type: text/event-stream`, the proxy switches from normal HTTP response handling to SSE streaming mode. The MIME type check ignores parameters like `charset`, so `text/event-stream; charset=utf-8` is also detected.
+SSE detection happens at the HTTP response level. When the upstream server returns a response with `Content-Type: text/event-stream`, the connector swaps the response Channel into the SSE Layer. The MIME type check ignores parameters like `charset`, so `text/event-stream; charset=utf-8` is also detected. The SSE Layer itself contains no detection logic — it is a Channel adapter.
 
-SSE is not a separate protocol -- it rides on top of HTTP/1.x (or HTTPS via MITM). The request phase is recorded normally as an HTTP flow, and the response phase switches to event-level streaming.
+SSE is not a separate transport — it rides on top of HTTP/1.x (or HTTPS via MITM). The request phase flows through the [HTTP/1.x](http.md) Layer normally, and the response side switches to event-level streaming.
 
 ```
 Client ──HTTP Request──> yorishiro-proxy ──HTTP Request──> Upstream Server
@@ -35,18 +37,17 @@ Lines starting with `:` are treated as comments and silently consumed. Unknown f
 
 ## Event-level recording
 
-Each SSE event is recorded as a separate `flow.Message` with `direction="receive"`. This follows the same progressive recording pattern used by [WebSocket](websocket.md) frame recording.
+Each parsed SSE event is emitted as a separate envelope with `Direction=Receive` and `Envelope.Protocol=sse`. The first call to `Next` returns a clone of the original response Envelope with Protocol overridden to `ProtocolSSE` (preserving Sequence). Subsequent `Next` calls drive the SSE parser over the body reader and emit one envelope per parsed event with `Message=*envelope.SSEMessage` and `Envelope.Raw` containing the wire bytes of the event (including the trailing blank line).
+
+`Send` is a programmer error on the SSE Layer; it returns the sentinel `ErrSendUnsupported`. SSE is half-duplex server→client.
 
 ### Flow structure
 
 An SSE flow is recorded with:
 
-- **Protocol**: `HTTP/1.x` (or `HTTPS` for TLS connections)
-- **Flow type**: `stream` (updated from `unary` when SSE is detected)
+- **Protocol**: `sse`
+- **Flow type**: `stream`
 - **State**: `active` while the stream is open, `complete` when it ends
-- **Tags**: `streaming_type=sse` and `sse_events_recorded=<count>`
-
-The flow starts with the HTTP request (recorded as a `send` message) and the response headers (recorded as the first `receive` message with metadata `sse_type=headers`). Each subsequent SSE event is appended as a `receive` message with metadata `sse_type=event`.
 
 ### Event message metadata
 
@@ -59,7 +60,7 @@ Each event message includes the following metadata fields:
 | `sse_id` | Event ID from the `id:` field (omitted if empty) |
 | `sse_retry` | Retry value from the `retry:` field (omitted if empty) |
 
-The event `Data` is stored in the message `Body` field, and the original wire-format bytes are preserved in `RawBytes`.
+The event `Data` is stored on the `SSEMessage` Message struct, and the original wire-format bytes (including the trailing blank line) are preserved on `Envelope.Raw`.
 
 ## Intercept support
 
@@ -100,26 +101,7 @@ Unmodified events are recorded as a single message without variant metadata.
 
 ## Plugin hooks
 
-The SSE handler dispatches the same plugin hooks as standard HTTP responses, adapted for event-level processing:
-
-| Hook | When it fires | Scope |
-|------|--------------|-------|
-| `on_receive_from_server` | After receiving the response headers | Header-level (once) |
-| `on_receive_from_server` | After parsing each SSE event | Event-level (per event) |
-| `on_before_send_to_client` | Before writing the response headers | Header-level (once) |
-| `on_before_send_to_client` | Before forwarding each SSE event | Event-level (per event) |
-
-For event-level hooks, the SSE event is mapped to a synthetic HTTP response:
-
-- **Response body**: the event `Data` field
-- **`X-SSE-Event` header**: the event type
-- **`X-SSE-Id` header**: the event ID
-- **`X-SSE-Retry` header**: the retry value
-
-Plugins can modify these fields; changes are applied back to the SSE event before forwarding.
-
-!!! note
-    Plugin hooks are dispatched in the plaintext HTTP path. In the HTTPS MITM path, event-level intercept and variant tracking work, but per-event plugin hooks are not dispatched. This is a known limitation.
+The SSE Layer participates in the standard Pipeline. Plugin authors register hooks via the pluginv2 engine using the `(protocol, event, phase)` triple — for example `(sse, on_event, pre)` to observe each event envelope before intercept. See the [Plugin hook reference](../plugins/hook-reference.md) for the full surface.
 
 ## Safety filter
 
@@ -138,13 +120,13 @@ Response auto-transform rules are **not applied** to SSE streams. Auto-transform
 
 ### Find SSE flows
 
-There is no dedicated protocol filter for SSE since it uses HTTP/HTTPS as the transport. Use the `url_pattern` filter or query flow details to identify SSE streams by their tags:
+The canonical Envelope.Protocol value for SSE is `sse`:
 
 ```json
 // query
 {
   "resource": "flows",
-  "filter": {"method": "GET", "url_pattern": "/events"}
+  "filter": {"protocol": "sse"}
 }
 ```
 
@@ -199,10 +181,9 @@ Each SSE event passes through the following steps in order:
 
 ## Limitations
 
+- **Receive-only Layer** -- SSE is half-duplex server→client; `Send` on the SSE Channel returns `ErrSendUnsupported`
 - **No auto-transform** -- response auto-transform rules require full body buffering and are skipped for SSE
-- **HTTPS plugin hooks** -- per-event plugin hooks are not dispatched in the HTTPS MITM path (header-level intercept and event-level intercept still work)
 - **Response-level modify** -- `modify_and_forward` is not supported at the response header level for SSE (treated as release)
-- **Recording cap** -- only the first 10,000 events per stream are recorded; subsequent events are forwarded but not saved
 
 ## Related pages
 

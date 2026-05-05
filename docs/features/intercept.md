@@ -1,13 +1,34 @@
 # Intercept
 
-The intercept feature lets you pause HTTP requests and responses in transit, inspect them, and decide whether to release, modify, or drop them. This gives you real-time control over traffic flowing through the proxy.
+The intercept feature lets you pause HTTP, WebSocket, and gRPC messages in transit, inspect them, and decide whether to release, modify, or drop them. This gives you real-time control over traffic flowing through the proxy.
 
 ## How interception works
 
 1. Define intercept rules that match specific requests or responses
-2. When a matching request or response passes through the proxy, it is held in the intercept queue
+2. When a matching message passes through the proxy, it is held in the intercept queue
 3. The AI agent (or WebUI user) reviews the queued item
 4. The item is released as-is, modified and forwarded, or dropped
+
+### Per-protocol rule engines
+
+The Pipeline `InterceptStep` dispatches via a type-switch on `env.Message` to a per-protocol intercept engine:
+
+| Message type | Engine |
+|--------------|--------|
+| `HTTPMessage` | `internal/rules/http.InterceptEngine` |
+| `WSMessage` | `internal/rules/ws.InterceptEngine` |
+| `GRPCStartMessage`, `GRPCDataMessage`, `GRPCEndMessage` | `internal/rules/grpc.InterceptEngine` |
+| `SSEMessage` | pass-through (half-duplex receive-only, no Send-side rules to apply) |
+
+Each engine evaluates protocol-specific match conditions (HTTP path/method, WS opcode, gRPC service/method) and produces the matched rule list.
+
+### Hold queue
+
+A matched envelope is parked in the **HoldQueue** (`internal/rules/common.HoldQueue`) — a thread-safe map of held envelopes keyed by intercept ID. The queue is shared across all protocols. Each held entry waits for an external action (release, drop, or modify-and-forward) delivered via the `intercept` MCP tool or the Web UI.
+
+The queue is bounded (default 100 items) and time-bounded (default 5 minutes). When either limit is hit, the configured timeout behavior runs (`auto_release` or `auto_drop`).
+
+When you choose **modify-and-forward**, the user-modified envelope is re-evaluated by `SafetyStep` before being released downstream. This closes the gap where an operator-injected payload could bypass the input filter that gated the original held envelope (USK-702).
 
 ## Configuring intercept rules
 

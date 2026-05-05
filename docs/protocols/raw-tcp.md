@@ -1,23 +1,25 @@
 # Raw TCP
 
-yorishiro-proxy includes a raw TCP handler that acts as a fallback for connections that do not match any specific protocol handler. It relays data bidirectionally between the client and a configured upstream target, recording all traffic chunks to the flow store.
+yorishiro-proxy includes a `bytechunk` Layer (`internal/layer/bytechunk/`) that wraps a `net.Conn` and yields one `RawMessage` envelope per `Read()` call. This is the identity Layer for raw TCP passthrough and TLS-terminate-only diagnostic mode (HTTP request smuggling).
+
+L7 structured view: not applicable. L4 raw bytes: yes. The Layer is smuggling-safe: no accumulation or framing is applied, so chunk boundaries are determined by the OS TCP stack — the proxy observes wire reality without imposing its own segmentation.
 
 ## Fallback protocol
 
-The raw TCP handler's `Detect` method always returns `true`, which means it matches any connection. Because of this, it must be registered **last** in the protocol detector's priority order:
+The connector's protocol detector applies the following priority order on the peeked bytes:
 
 ```
 1. SOCKS5  (first byte = 0x05)
 2. HTTP/2  (preface: "PRI * HTTP/2.0\r\n")
 3. HTTP    (method prefix: GET, POST, PUT, etc.)
-4. TCP     (always matches -- fallback)
+4. bytechunk Layer  (fallback for everything else)
 ```
 
-If none of the specific protocol handlers match the peeked bytes, the connection falls through to the raw TCP handler.
+If none of the specific protocols match, the ConnectionStack is built around the bytechunk Layer.
 
 ## TCP forwarding mappings
 
-The raw TCP handler requires explicit forwarding configuration. Each mapping associates a local listen port with an upstream target address. Connections arriving on a port without a configured mapping are closed immediately.
+Raw TCP forwarding requires explicit configuration. Each mapping associates a local listen port with an upstream target address. Connections arriving on a port without a configured mapping are closed immediately.
 
 Configure TCP forwarding via the `proxy_start` tool:
 
@@ -77,34 +79,33 @@ See [proxy_start](../tools/proxy-start.md#tcp_forwards) for the full ForwardConf
 
 ## Protocol detection on TCP forwards
 
-When you configure a TCP forward with the ForwardConfig object format, the `protocol` field controls how the proxy handles the connection at L7.
+When you configure a TCP forward with the ForwardConfig object format, the `protocol` field controls which Layer the connector wraps the connection in at L7.
 
 ### Auto detection (default)
 
-When `protocol` is `"auto"` (or omitted), the proxy peeks at the initial bytes of the connection to determine the L7 protocol. The detection logic follows the same priority as the main listener:
+When `protocol` is `"auto"` (or omitted), the connector peeks at the initial bytes of the connection to choose a Layer. The detection logic follows the same priority as the main listener:
 
-1. If the bytes match the HTTP/2 connection preface, the connection is handled as HTTP/2
-2. If the bytes match an HTTP method prefix, the connection is handled as HTTP/1.x
-3. Otherwise, the connection falls through to raw TCP relay
+1. If the bytes match the HTTP/2 connection preface, the connection is wrapped in the HTTP/2 Layer
+2. If the bytes match an HTTP method prefix, the connection is wrapped in the HTTP/1.x Layer
+3. Otherwise, the connection falls through to the `bytechunk` Layer
 
 This allows a single forwarded port to handle multiple protocols automatically.
 
 ### Explicit protocol
 
-When `protocol` is set to a specific value (`"http"`, `"http2"`, `"grpc"`, `"websocket"`), the proxy delegates the connection directly to the corresponding protocol handler without peeking. This is useful when you know the upstream protocol in advance and want to skip detection overhead.
+When `protocol` is set to a specific value (`"http"`, `"http2"`, `"grpc"`, `"websocket"`), the connector wires the corresponding Layer directly without peeking. This is useful when you know the upstream protocol in advance and want to skip detection overhead.
 
 ### Raw mode
 
-When `protocol` is `"raw"`, the proxy performs no L7 parsing and relays the connection as opaque bytes. This is the same behavior as the legacy string format (`"3306": "db.example.com:3306"`).
+When `protocol` is `"raw"`, the connector wires the `bytechunk` Layer with no further L7 parsing. This is the same behavior as the legacy string format (`"3306": "db.example.com:3306"`).
 
 ## TLS MITM on TCP forwards
 
-When `tls` is `true` in a ForwardConfig, the proxy terminates TLS on the forwarded port before applying protocol detection or relay. The proxy:
+When `tls` is `true` in a ForwardConfig, the connector wires the `tlslayer/` Layer between the listener and the chosen inner Layer:
 
-1. Accepts the inbound TLS connection, issuing a certificate using the target hostname
-2. Decrypts the traffic
-3. Applies L7 protocol handling (based on the `protocol` setting) to the decrypted stream
-4. Forwards the plaintext to the upstream target
+1. The TLS Layer accepts the inbound TLS connection, issuing a certificate using the target hostname
+2. The decrypted byte stream feeds the inner Layer (chosen by `protocol`)
+3. A separate upstream TLS connection is dialed and its cleartext stream feeds back through the inner Layer's `Send` direction
 
 This enables inspection of TLS-wrapped services such as gRPC-over-TLS or HTTPS backends that are accessed via TCP forwarding rather than through the HTTP CONNECT proxy.
 
@@ -126,22 +127,13 @@ This enables inspection of TLS-wrapped services such as gRPC-over-TLS or HTTPS b
 
 ## Data recording
 
-All data flowing through the relay is recorded as flow messages:
+Each `Read()` from the underlying connection produces exactly one `RawMessage` envelope:
 
-- **Protocol**: `TCP`
+- **Protocol**: `raw`
 - **Flow type**: `bidirectional`
 - **Direction**: `send` (client to upstream) or `receive` (upstream to client)
 
-Each data chunk read from either side is recorded as a separate message with:
-
-| Field | Description |
-|-------|-------------|
-| `raw_bytes` | The raw data bytes (copied to avoid aliasing) |
-| `sequence` | Monotonically increasing sequence number |
-| `direction` | `send` or `receive` |
-| `metadata.chunk_size` | Size of the data chunk in bytes |
-
-The relay uses a 32 KB buffer for each direction, so messages may be up to 32 KB in size. The sequence counter is shared across both directions, preserving interleaved ordering.
+`Envelope.Raw` carries the raw chunk bytes verbatim. Sequence is a monotonically increasing counter shared across both directions, preserving the interleaved ordering of the conversation.
 
 ## Connection lifecycle
 
@@ -159,40 +151,17 @@ If the upstream dial fails, the flow is not created and the client connection is
 
 ## Plugin hooks
 
-The TCP handler dispatches plugin hooks per data chunk:
-
-| Direction | Hooks dispatched |
-|-----------|-----------------|
-| Client to upstream | `on_receive_from_client` then `on_before_send_to_server` |
-| Upstream to client | `on_receive_from_server` then `on_before_send_to_client` |
-
-Plugin capabilities:
-
-- **Drop chunks**: returning `ActionDrop` silently skips the chunk (not forwarded, not recorded)
-- **Modify data**: returning modified `data` in the result updates the chunk before forwarding
-- **Size limits**: if a plugin-modified chunk exceeds the maximum TCP plugin chunk size, the modification is discarded and the original data is preserved
-
-Plugin hook data includes:
-
-| Key | Description |
-|-----|-------------|
-| `protocol` | `"tcp"` |
-| `data` | The raw chunk bytes |
-| `direction` | `"client_to_server"` or `"server_to_client"` |
-| `forward_target` | The upstream target address |
-| `conn_info` | Client and server address information |
-
-A per-chunk transaction context is created so plugins can pass state between the receive and send hooks for the same chunk.
+The bytechunk Layer participates in the standard Pipeline. Plugin authors register hooks via the pluginv2 engine using the `(protocol, event, phase)` triple — for example `(raw, on_chunk, pre)` to observe each `RawMessage` envelope before intercept. See the [Plugin hook reference](../plugins/hook-reference.md) for the full surface.
 
 Plugin errors are logged but do not interrupt the relay (fail-open behavior).
 
 ## Limitations
 
-- **No protocol awareness in raw mode** -- when `protocol` is `"raw"` (or using the legacy string format), the handler treats all traffic as opaque bytes with no protocol-specific parsing. Use ForwardConfig with `protocol: "auto"` or an explicit protocol to enable L7 parsing.
+- **No protocol awareness in raw mode** -- when `protocol` is `"raw"` (or using the legacy string format), the bytechunk Layer treats all traffic as opaque bytes with no protocol-specific parsing. Use ForwardConfig with `protocol: "auto"` or an explicit protocol to enable L7 parsing.
 - **No TLS termination in raw mode** -- without `tls: true` in ForwardConfig, encrypted TCP connections pass through as raw bytes without decryption
 - **Explicit mapping required** -- connections to unmapped ports are closed immediately
-- **No target scope enforcement** -- the TCP handler does not apply target scope rules (the mapping itself acts as the scope)
-- **No safety filter** -- since there is no HTTP-layer understanding in raw mode, safety filter rules do not apply
+- **No target scope enforcement** -- raw forwarding does not apply target scope rules (the mapping itself acts as the scope)
+- **No safety filter** -- since there is no L7 understanding in raw mode, safety filter rules do not apply
 
 ## Related pages
 

@@ -157,4 +157,4 @@ Click a result row to open the detail panel showing:
 ## Related pages
 
 - [Fuzzer feature](../features/fuzzer.md) -- Detailed fuzzer documentation
-- [fuzz tool](../tools/fuzz.md) -- MCP tool reference
+- [fuzz_http](../tools/fuzz-http.md), [fuzz_ws](../tools/fuzz-ws.md), [fuzz_grpc](../tools/fuzz-grpc.md), [fuzz_raw](../tools/fuzz-raw.md) -- typed per-protocol fuzz MCP tools

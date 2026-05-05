@@ -4,11 +4,30 @@ Auto-transform rules automatically modify matching requests and responses as the
 
 ## How auto-transform works
 
-When a request or response passes through the proxy:
+When a message passes through the proxy:
 
 1. Each enabled auto-transform rule is evaluated in priority order (lower values first)
 2. If all conditions match, the rule's action is applied
-3. Multiple rules can apply to the same request or response
+3. Multiple rules can apply to the same message
+
+Mutations happen in place on the typed `Envelope.Message` and the ordered `[]envelope.KeyValue` headers — auto-transform is envelope-native. Subsequent Pipeline Steps see the modified message without envelope replacement.
+
+### Per-protocol rule engines
+
+The Pipeline `TransformStep` dispatches via a type-switch on `env.Message` to a per-protocol transform engine:
+
+| Message type | Engine |
+|--------------|--------|
+| `HTTPMessage` | `internal/rules/http.TransformEngine` |
+| `WSMessage` | `internal/rules/ws.TransformEngine` |
+| `GRPCStartMessage`, `GRPCDataMessage`, `GRPCEndMessage` | `internal/rules/grpc.TransformEngine` |
+| `SSEMessage` | pass-through (half-duplex receive-only) |
+
+The configuration shapes documented below target the HTTP engine. WebSocket and gRPC rules use the same priority/condition/action vocabulary adapted to each protocol's message shape (WS frames, gRPC service/method, gRPC trailers).
+
+### Where auto-transform runs
+
+`TransformStep` sits after Intercept in the canonical Pipeline chain (`HostScope → HTTPScope → Safety → PluginPre → Intercept → Transform → Macro → PluginPost → Record`), so transforms apply to the live envelope after any operator hold/release decision. Resend and Macro fan-out paths bypass `PluginPre` and `Intercept` but still traverse `Transform → Macro → PluginPost → Record`, so synthesized requests pick up the same transforms as proxied traffic.
 
 ## Rule definition
 

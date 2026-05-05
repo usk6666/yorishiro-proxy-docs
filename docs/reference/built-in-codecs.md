@@ -199,26 +199,20 @@ When you specify `encoding: ["base64", "url_encode_query"]`:
 
 ### Usage in MCP tools
 
-Specify encoding chains in the `encoding` parameter of fuzzer payload sets, resender body patches, or macro steps:
+Specify encoding chains in the `encoding` parameter on resender `body_patches` or macro steps. The typed fuzz tools (`fuzz_http`, `fuzz_ws`, `fuzz_grpc`, `fuzz_raw`) only accept a single per-position encoding (`"text"` or `"base64"`), so for multi-codec chains pre-encode the payloads from the client side. To inject a base64 payload at a position:
 
 ```json
-// fuzz
+// fuzz_http
 {
   "flow_id": "abc123",
   "positions": [
     {
-      "location": "body",
-      "name": "payload",
-      "start": 10,
-      "end": 20
-    }
-  ],
-  "payload_sets": [
-    {
-      "name": "payload",
-      "type": "wordlist",
-      "values": ["<script>alert(1)</script>", "' OR 1=1 --"],
-      "encoding": ["base64"]
+      "path": "body",
+      "encoding": "base64",
+      "payloads": [
+        "PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+        "JyBPUiAxPTEgLS0="
+      ]
     }
   ]
 }
@@ -262,18 +256,8 @@ Generate SHA-256 hashes of wordlist entries (e.g., for testing hash-based authen
 
 `alert` → `\u0061\u006C\u0065\u0072\u0074`
 
-## Custom codec plugins
-
-You can extend the codec registry with custom codecs written in Starlark. Custom codecs are registered through the `codec_plugins` section in the config file and become available in encoding chains alongside built-in codecs.
-
-See [Codec plugins](../plugins/codec-plugins.md) for details on writing custom codecs.
-
-!!! warning "Name conflicts"
-    If a custom codec uses the same name as a built-in codec, registration will fail with an error. Choose unique names for custom codecs.
-
 ## Related pages
 
 - [Fuzzer](../features/fuzzer.md) — Use encoding chains with payload sets
 - [Resender](../features/resender.md) — Apply codecs to body patches
 - [Macros](../features/macros.md) — Use codecs in macro steps
-- [Codec plugins](../plugins/codec-plugins.md) — Write custom codecs in Starlark

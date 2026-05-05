@@ -2,6 +2,8 @@
 
 Target scope controls which hosts and URLs the proxy is allowed to send requests to. It uses a two-layer architecture that separates policy-level controls (set by the operator) from agent-level controls (set by the AI agent at runtime).
 
+Target scope is the only scope mechanism in the proxy. It is enforced by `HostScopeStep` at the head of the canonical Pipeline chain (`HostScope → HTTPScope → Safety → PluginPre → Intercept → Transform → Macro → PluginPost → Record`), so connections targeting a denied host are filtered before any other Step runs. The check uses `Envelope.Context.TargetHost` (populated from the CONNECT or SOCKS5 target) and never inspects the typed `Message`.
+
 ## Two-layer architecture
 
 ### Policy layer
@@ -207,11 +209,12 @@ The response tells you:
 
 Target scope is checked at multiple points:
 
-- **Resend** -- before sending the request and after URL override
-- **Resend raw** -- before connecting to the target address
-- **Fuzz** -- on the template flow URL and after payload injection
-- **Macro** -- on each step's URL before execution and at send time after template expansion
-- **Intercept** -- on modify_and_forward URL overrides
+- **Proxy data path** -- `HostScopeStep` runs on every envelope flowing through the Pipeline, before any other Step
+- **resend_http / resend_ws / resend_grpc** -- before sending and after URL override
+- **resend_raw** -- before connecting to the target address
+- **fuzz_http / fuzz_ws / fuzz_grpc / fuzz_raw** -- on the template envelope and again after payload injection
+- **macro** -- on each step's URL before execution and at send time after template expansion
+- **intercept** -- on `modify_and_forward` URL overrides
 
 This multi-point enforcement prevents SSRF via payload injection or template expansion.
 

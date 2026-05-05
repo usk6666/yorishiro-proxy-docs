@@ -1,506 +1,289 @@
 # Fuzzer
 
-The fuzzer executes automated testing campaigns by injecting payloads into recorded proxy requests. You define injection positions, payload sets, and execution parameters, then the fuzzer runs asynchronously and records all results as new flows.
+The fuzzer executes automated testing campaigns by injecting payloads into recorded proxy requests. You define injection positions and payload lists, then the fuzz tool runs synchronously, records each variant as a new stream, and returns the per-variant result list.
+
+Each protocol has its own typed fuzz tool: [`fuzz_http`](../tools/fuzz-http.md), [`fuzz_ws`](../tools/fuzz-ws.md), [`fuzz_grpc`](../tools/fuzz-grpc.md), [`fuzz_raw`](../tools/fuzz-raw.md). Pick the tool that matches the recorded flow's protocol.
 
 ## How it works
 
 1. Select a recorded flow as the template
-2. Define positions where payloads should be injected
-3. Configure payload sets with the values to inject
-4. Start the fuzz job -- it runs asynchronously and returns a `fuzz_id`
-5. Query results with the `query` tool using `fuzz_results`
+2. Define typed positions where payloads should be injected
+3. Call the typed fuzz tool -- it runs synchronously and returns the per-variant result list
+4. Inspect individual variant streams via the [`query`](../tools/query.md) tool keyed by `stream_id`
+
+## Limits
+
+- Maximum variants per call: **1000** (cartesian product across all positions)
+- Maximum positions per call (HTTP): **32**
+- Maximum decoded payload size per position: **1 MiB**
+
+The variant sequence is the cartesian product of all positions' payloads. Each variant is executed sequentially with a fresh dial.
 
 ## Position definitions
 
-Positions specify where payloads are injected in the request. Each position requires:
+Positions specify where payloads are injected. Each position has:
 
-- **`id`** -- unique identifier (e.g. `"pos-0"`)
-- **`location`** -- where to inject: `header`, `path`, `query`, `body_regex`, `body_json`, `cookie`
-- **`payload_set`** -- which payload set to use
+- **`path`** -- typed path into the protocol's `Message` shape
+- **`payloads`** -- list of values to substitute at this path
+- **`encoding`** -- `"text"` (default) or `"base64"`
+
+The position `path` values for `fuzz_http` are: `method`, `scheme`, `authority`, `path`, `raw_query`, `body`, `headers[N].name`, `headers[N].value`. Cookies live inside the `Cookie` header; fuzz them via `headers[N].value`. The legacy `body_regex` and partial-match `match` modes are gone -- when you need surgical body edits, combine `body_patches` (inherited from [`resend_http`](../tools/resend-http.md)) with full-value position payloads.
 
 ### Header position
 
-Replace or add a header value:
+Replace a header value (find the header's index from the recorded flow):
 
 ```json
-// fuzz
+// fuzz_http
 {
-  "action": "fuzz",
-  "params": {
-    "flow_id": "abc-123",
-    "attack_type": "sequential",
-    "positions": [
-      {
-        "id": "pos-0",
-        "location": "header",
-        "name": "Authorization",
-        "mode": "replace",
-        "match": "Bearer (.*)",
-        "payload_set": "tokens"
-      }
-    ],
-    "payload_sets": {
-      "tokens": {
-        "type": "wordlist",
-        "values": ["token1", "token2", "admin-token"]
-      }
+  "flow_id": "abc-123",
+  "positions": [
+    {
+      "path": "headers[3].value",
+      "payloads": ["Bearer token1", "Bearer token2", "Bearer admin-token"]
     }
-  }
+  ]
 }
 ```
-
-The `match` field uses regex for partial replacement. When a capture group is specified, only the group is replaced.
 
 ### Query position
 
-Inject into a URL query parameter:
+Inject into a query string -- the typed surface fuzzes the full `raw_query`:
 
 ```json
+// fuzz_http
 {
-  "id": "pos-0",
-  "location": "query",
-  "name": "search",
-  "payload_set": "xss"
-}
-```
-
-### Body JSON position
-
-Inject into a JSON body field using JSON path:
-
-```json
-{
-  "id": "pos-0",
-  "location": "body_json",
-  "json_path": "$.password",
-  "payload_set": "passwords"
-}
-```
-
-### Body regex position
-
-Inject by matching a regex pattern in the body:
-
-```json
-{
-  "id": "pos-0",
-  "location": "body_regex",
-  "match": "csrf_token=([^&]+)",
-  "payload_set": "tokens"
-}
-```
-
-### Cookie position
-
-Inject into a specific cookie:
-
-```json
-{
-  "id": "pos-0",
-  "location": "cookie",
-  "name": "session",
-  "payload_set": "session_ids"
-}
-```
-
-### Position modes
-
-| Mode | Description |
-|------|-------------|
-| `replace` | Replace the current value (default) |
-| `add` | Add a new entry (for headers, query params) |
-| `remove` | Remove the entry entirely (no payload_set needed) |
-
-## Payload sets
-
-Payload sets define the values to inject at each position.
-
-### Wordlist
-
-Inline list of payload strings:
-
-```json
-{
-  "type": "wordlist",
-  "values": ["<script>alert(1)</script>", "' OR 1=1 --", "{{7*7}}"]
-}
-```
-
-### File
-
-Load payloads from a file under `~/.yorishiro-proxy/wordlists/`:
-
-```json
-{
-  "type": "file",
-  "path": "sqli/generic.txt"
-}
-```
-
-### Range
-
-Generate integer payloads from start to end:
-
-```json
-{
-  "type": "range",
-  "start": 1,
-  "end": 100,
-  "step": 1
-}
-```
-
-### Sequence
-
-Generate formatted sequential strings:
-
-```json
-{
-  "type": "sequence",
-  "start": 1,
-  "end": 50,
-  "format": "user%04d"
-}
-```
-
-This produces `user0001`, `user0002`, ..., `user0050`.
-
-### Charset
-
-Generate all combinations of a character set with a given length:
-
-```json
-{
-  "type": "charset",
-  "charset": "0123456789",
-  "length": 4
-}
-```
-
-This generates all 4-digit PINs: `0000`, `0001`, ..., `9999`.
-
-### Case variation
-
-Generate all case variations of a string:
-
-```json
-{
-  "type": "case_variation",
-  "input": "Admin"
-}
-```
-
-This produces `admin`, `Admin`, `ADMIN`, `aDmin`, etc.
-
-### Null byte injection
-
-Generate null byte injection variants of a string:
-
-```json
-{
-  "type": "null_byte_injection",
-  "input": "test.php"
-}
-```
-
-## Encoding chains
-
-Each payload set can include an `encoding` array that applies codec transformations to every payload before injection:
-
-```json
-{
-  "type": "wordlist",
-  "values": ["<script>alert(1)</script>", "<img onerror=alert(1)>"],
-  "encoding": ["url_encode_query"]
-}
-```
-
-Codecs are applied in pipeline order. For example, `["url_encode_query", "base64"]` first URL-encodes the payload, then Base64-encodes the result.
-
-Available codecs: `base64`, `base64url`, `url_encode_query`, `url_encode_path`, `url_encode_full`, `double_url_encode`, `hex`, `html_entity`, `html_escape`, `unicode_escape`, `md5`, `sha256`, `lower`, `upper`.
-
-Maximum chain length is 10 codecs.
-
-## Attack types
-
-### Sequential mode
-
-Tests one position at a time while keeping other positions at their original values. Each position cycles through all payloads from its payload set independently.
-
-Total requests = sum of all payload set sizes.
-
-```json
-// fuzz
-{
-  "action": "fuzz",
-  "params": {
-    "flow_id": "abc-123",
-    "attack_type": "sequential",
-    "positions": [
-      {"id": "pos-0", "location": "query", "name": "username", "payload_set": "users"},
-      {"id": "pos-1", "location": "body_json", "json_path": "$.password", "payload_set": "passwords"}
-    ],
-    "payload_sets": {
-      "users": {"type": "wordlist", "values": ["admin", "root"]},
-      "passwords": {"type": "wordlist", "values": ["pass1", "pass2", "pass3"]}
+  "flow_id": "abc-123",
+  "positions": [
+    {
+      "path": "raw_query",
+      "payloads": ["search=foo", "search=<script>alert(1)</script>"]
     }
-  }
+  ]
 }
 ```
 
-### Parallel mode
+For more precise per-parameter substitution, pre-compute the candidate query strings and supply them as the payload list.
 
-Applies payloads to all positions simultaneously using a zip strategy. Payload sets are consumed in lockstep.
+### Body position
 
-Total requests = max payload set size.
+Substitute the entire request body:
 
 ```json
-// fuzz
+// fuzz_http
 {
-  "action": "fuzz",
-  "params": {
-    "flow_id": "abc-123",
-    "attack_type": "parallel",
-    "positions": [
-      {"id": "pos-0", "location": "query", "name": "username", "payload_set": "users"},
-      {"id": "pos-1", "location": "body_json", "json_path": "$.password", "payload_set": "passwords"}
-    ],
-    "payload_sets": {
-      "users": {"type": "wordlist", "values": ["admin", "root", "user"]},
-      "passwords": {"type": "wordlist", "values": ["pass1", "pass2", "pass3"]}
+  "flow_id": "abc-123",
+  "positions": [
+    {
+      "path": "body",
+      "payloads": [
+        "{\"password\":\"pass1\"}",
+        "{\"password\":\"pass2\"}"
+      ]
     }
-  }
+  ]
+}
+```
+
+For partial JSON edits, combine `body_patches` (inherited from `resend_http`) with one or more `body` positions.
+
+### Cookie
+
+Cookies are sent via the `Cookie` request header. Locate the header's index in the recorded flow and fuzz `headers[N].value`:
+
+```json
+// fuzz_http
+{
+  "flow_id": "abc-123",
+  "positions": [
+    {
+      "path": "headers[2].value",
+      "payloads": ["session=abc", "session=def", "session=admin"]
+    }
+  ]
+}
+```
+
+## Payload encoding
+
+Each position has a single `encoding` (`"text"` default or `"base64"`). Codec chains (the legacy `["base64", "url_encode_query", ...]` arrays) are no longer applied at the fuzz tool layer -- pre-encode payloads from the client side or use `body_patches` with the `encoding` array for body edits. To inject pre-encoded binary payloads:
+
+```json
+// fuzz_http
+{
+  "flow_id": "abc-123",
+  "positions": [
+    {
+      "path": "body",
+      "encoding": "base64",
+      "payloads": [
+        "PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+        "JyBPUiAxPTEgLS0="
+      ]
+    }
+  ]
+}
+```
+
+## Attack patterns
+
+The typed fuzz tools always cartesian-product positions × payloads, capped at 1000 variants. The legacy `sequential` / `parallel` distinction no longer exists -- if you need a single-position-at-a-time scan, issue one fuzz call per position. If you need lockstep "zip" semantics, pre-compute the lockstepped payload list and supply it as a single position.
+
+### Cartesian product example
+
+Two positions × two payloads each = four variants:
+
+```json
+// fuzz_http
+{
+  "flow_id": "abc-123",
+  "positions": [
+    {"path": "raw_query", "payloads": ["user=admin", "user=root"]},
+    {"path": "body", "payloads": ["{\"password\":\"pass1\"}", "{\"password\":\"pass2\"}"]}
+  ]
 }
 ```
 
 ## Execution parameters
 
+The typed tools are synchronous and serial. The legacy `concurrency`, `rate_limit_rps`, `delay_ms`, `max_retries` parameters have been removed -- pace from the client side by chunking your payload list across multiple calls. Per-variant timeouts use the inherited `timeout_ms` (default `30000`).
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `concurrency` | integer | `1` | Number of concurrent workers |
-| `rate_limit_rps` | number | `0` (unlimited) | Requests per second limit |
-| `delay_ms` | integer | `0` | Fixed delay between requests in ms |
-| `timeout_ms` | integer | `10000` | Per-request timeout in ms |
-| `max_retries` | integer | `0` | Retry count per failed request |
+| `timeout_ms` | integer | `30000` | Per-variant timeout in ms |
+| `tag` | string | | Tag stored on every variant Stream's `Tags` map |
 
-## Async execution and job management
+## Synchronous execution
 
-Fuzz jobs run asynchronously. The `fuzz` action returns a `fuzz_id` immediately.
+The typed fuzz tools run in-process and return the full per-variant result list when finished. There is no separate fuzz-job lifecycle to start, pause, resume, or cancel -- to interrupt a long run, cancel the MCP call from the client. Each variant is recorded as its own stream and remains queryable after the run.
 
-### Starting a job
+### Running a campaign
 
 ```json
-// fuzz
+// fuzz_http
 {
-  "action": "fuzz",
-  "params": {
-    "flow_id": "abc-123",
-    "attack_type": "sequential",
-    "positions": [
-      {"id": "pos-0", "location": "query", "name": "q", "payload_set": "xss"}
-    ],
-    "payload_sets": {
-      "xss": {"type": "wordlist", "values": ["<script>", "{{7*7}}", "' OR 1=1"]}
-    },
-    "concurrency": 5,
-    "rate_limit_rps": 10,
-    "tag": "xss-scan"
-  }
+  "flow_id": "abc-123",
+  "positions": [
+    {
+      "path": "raw_query",
+      "payloads": ["q=<script>", "q={{7*7}}", "q=' OR 1=1"]
+    }
+  ],
+  "tag": "xss-scan"
 }
 ```
 
-### Pausing a job
-
-```json
-// fuzz
-{
-  "action": "fuzz_pause",
-  "params": {"fuzz_id": "fuzz-abc-123"}
-}
-```
-
-Workers stop after completing their current request.
-
-### Resuming a job
-
-```json
-// fuzz
-{
-  "action": "fuzz_resume",
-  "params": {"fuzz_id": "fuzz-abc-123"}
-}
-```
-
-### Canceling a job
-
-```json
-// fuzz
-{
-  "action": "fuzz_cancel",
-  "params": {"fuzz_id": "fuzz-abc-123"}
-}
-```
+The response contains `variants[]`, each with a `stream_id`, `status_code`, `body_size`, the payload map, and per-variant `duration_ms`. Cancel the MCP call from the client to stop the run mid-campaign.
 
 ## Stop conditions
 
-Define automatic stop conditions to end a fuzz job early:
+Each typed tool exposes a single boolean stop flag, picked to match the protocol:
+
+| Tool | Flag | Triggers when |
+|------|------|---------------|
+| `fuzz_http` | `stop_on_5xx` | A variant returns a 5xx response |
+| `fuzz_ws` | `stop_on_close` | A variant receives a Close frame from upstream |
+| `fuzz_grpc` | `stop_on_non_ok` | A variant returns a non-OK gRPC status |
+| `fuzz_raw` | `stop_on_error` | A variant fails (network error, timeout, pipeline drop) |
+
+The legacy `error_count`, `latency_threshold_ms`, `latency_baseline_multiplier`, and `latency_window` conditions are gone -- inspect the returned `variants[]` rows after the call to apply your own thresholds.
 
 ```json
-// fuzz
+// fuzz_http
 {
-  "action": "fuzz",
-  "params": {
-    "flow_id": "abc-123",
-    "attack_type": "sequential",
-    "positions": [
-      {"id": "pos-0", "location": "query", "name": "id", "payload_set": "ids"}
-    ],
-    "payload_sets": {
-      "ids": {"type": "range", "start": 1, "end": 10000}
-    },
-    "stop_on": {
-      "status_codes": [500, 503],
-      "error_count": 10,
-      "latency_threshold_ms": 5000,
-      "latency_baseline_multiplier": 3.0,
-      "latency_window": 10
+  "flow_id": "abc-123",
+  "positions": [
+    {
+      "path": "raw_query",
+      "payloads": ["id=1", "id=2", "id=3"]
     }
-  }
+  ],
+  "stop_on_5xx": true
 }
 ```
 
-| Condition | Description |
-|-----------|-------------|
-| `status_codes` | Stop when any of these HTTP status codes is received |
-| `error_count` | Stop when cumulative error count reaches this value |
-| `latency_threshold_ms` | Stop when sliding window median latency exceeds this value |
-| `latency_baseline_multiplier` | Stop when current median exceeds baseline median times this multiplier |
-| `latency_window` | Sliding window size for latency detection (default: `10`) |
-
 ## Querying results
 
-Use the `query` tool with `fuzz_results` to check progress and retrieve results:
+Each variant's full request and response are stored under its `stream_id`. Use the [`query`](../tools/query.md) tool to retrieve them:
 
 ```json
 // query
 {
-  "action": "fuzz_results",
-  "params": {
-    "fuzz_id": "fuzz-abc-123"
-  }
+  "resource": "stream",
+  "id": "<variant-stream-id>"
 }
 ```
 
-Results include status codes, response sizes, timing, and the payloads used for each request.
+The fuzz response itself includes per-variant `status_code`, `body_size`, `duration_ms`, payload map, and any `error` -- enough to triage results without an extra round trip.
 
-## Hooks integration
+## Authentication refresh
 
-The fuzzer supports the same pre/post hook system as the resender. Use hooks to refresh authentication tokens between fuzz iterations:
-
-```json
-// fuzz
-{
-  "action": "fuzz",
-  "params": {
-    "flow_id": "abc-123",
-    "attack_type": "sequential",
-    "positions": [
-      {"id": "pos-0", "location": "body_json", "json_path": "$.password", "payload_set": "passwords"}
-    ],
-    "payload_sets": {
-      "passwords": {"type": "wordlist", "values": ["test1", "test2"]}
-    },
-    "hooks": {
-      "pre_send": {
-        "macro": "refresh-auth",
-        "run_interval": "every_n",
-        "n": 10
-      }
-    }
-  }
-}
-```
+Per-call macro hooks (`pre_send` / `post_receive`) have been removed. To refresh authentication mid-campaign, split the run into chunks and call your auth-refresh macro between chunks from the client side. See [Macros](macros.md) for the standalone macro execution model.
 
 ## Practical use cases
 
 ### XSS scanning
 
 ```json
-// fuzz
+// fuzz_http
 {
-  "action": "fuzz",
-  "params": {
-    "flow_id": "search-flow",
-    "attack_type": "sequential",
-    "positions": [
-      {"id": "pos-0", "location": "query", "name": "q", "payload_set": "xss"}
-    ],
-    "payload_sets": {
-      "xss": {
-        "type": "wordlist",
-        "values": [
-          "<script>alert(1)</script>",
-          "<img src=x onerror=alert(1)>",
-          "{{7*7}}",
-          "${7*7}"
-        ],
-        "encoding": ["url_encode_query"]
-      }
-    },
-    "tag": "xss-scan"
-  }
+  "flow_id": "search-flow",
+  "positions": [
+    {
+      "path": "raw_query",
+      "payloads": [
+        "q=%3Cscript%3Ealert(1)%3C%2Fscript%3E",
+        "q=%3Cimg+src%3Dx+onerror%3Dalert(1)%3E",
+        "q=%7B%7B7*7%7D%7D",
+        "q=%24%7B7*7%7D"
+      ]
+    }
+  ],
+  "tag": "xss-scan"
 }
 ```
 
 ### Brute force PIN
 
+For exhaustive enumerations like 4-digit PINs, generate the candidate list client-side and chunk across multiple fuzz calls (the per-call cap is 1000 variants):
+
 ```json
-// fuzz
+// fuzz_http
 {
-  "action": "fuzz",
-  "params": {
-    "flow_id": "pin-verify-flow",
-    "attack_type": "sequential",
-    "positions": [
-      {"id": "pos-0", "location": "body_json", "json_path": "$.pin", "payload_set": "pins"}
-    ],
-    "payload_sets": {
-      "pins": {
-        "type": "charset",
-        "charset": "0123456789",
-        "length": 4
-      }
-    },
-    "concurrency": 3,
-    "rate_limit_rps": 5,
-    "stop_on": {"status_codes": [200]}
-  }
+  "flow_id": "pin-verify-flow",
+  "positions": [
+    {
+      "path": "body",
+      "payloads": [
+        "{\"pin\":\"0000\"}",
+        "{\"pin\":\"0001\"}",
+        "{\"pin\":\"0002\"}"
+      ]
+    }
+  ],
+  "stop_on_5xx": false,
+  "tag": "pin-brute"
 }
 ```
 
 ### IDOR enumeration
 
 ```json
-// fuzz
+// fuzz_http
 {
-  "action": "fuzz",
-  "params": {
-    "flow_id": "user-profile-flow",
-    "attack_type": "sequential",
-    "positions": [
-      {"id": "pos-0", "location": "query", "name": "user_id", "payload_set": "ids"}
-    ],
-    "payload_sets": {
-      "ids": {"type": "range", "start": 1, "end": 1000}
-    },
-    "tag": "idor-scan"
-  }
+  "flow_id": "user-profile-flow",
+  "positions": [
+    {
+      "path": "raw_query",
+      "payloads": ["user_id=1", "user_id=2", "user_id=3", "user_id=4"]
+    }
+  ],
+  "tag": "idor-scan"
 }
 ```
 
 ## Related pages
 
-- [Fuzz tool reference](../tools/fuzz.md) -- MCP tool parameter reference
+- [fuzz_http](../tools/fuzz-http.md), [fuzz_ws](../tools/fuzz-ws.md), [fuzz_grpc](../tools/fuzz-grpc.md), [fuzz_raw](../tools/fuzz-raw.md) -- typed per-protocol fuzz MCP tools
 - [Resender](resender.md) -- Single request resend with mutations
-- [Comparer](comparer.md) -- Compare fuzz results against baselines
 - [Built-in codecs](../reference/built-in-codecs.md) -- Available encoding codecs

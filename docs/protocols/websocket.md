@@ -1,15 +1,17 @@
 # WebSocket
 
-yorishiro-proxy intercepts and records WebSocket connections at the message level. When an HTTP Upgrade request for WebSocket is detected, the proxy establishes the WebSocket tunnel and records each frame as a separate flow message with direction tracking.
+yorishiro-proxy intercepts and records WebSocket connections at the frame level. The WebSocket Layer (`internal/layer/ws/`) parses RFC 6455 wire frames and yields one `WSMessage` envelope per parsed frame, preserving the verbatim wire bytes (header + extended length + mask key + masked payload) on `Envelope.Raw`.
+
+L7 structured view: yes. L4 raw bytes: yes (per frame). Per-message-deflate (RFC 7692) is supported.
 
 ## HTTP upgrade detection
 
-WebSocket connections begin as regular HTTP requests with the upgrade mechanism defined in RFC 6455. The proxy detects WebSocket upgrades by checking for both headers before hop-by-hop header removal:
+WebSocket connections begin as regular HTTP requests with the upgrade mechanism defined in RFC 6455. The HTTP/1.x Layer detects WebSocket upgrades by checking for both headers:
 
 - `Connection: Upgrade` (case-insensitive, may be comma-separated)
 - `Upgrade: websocket` (case-insensitive)
 
-When detected, the request is handed off to the WebSocket handler instead of the normal HTTP request processing pipeline.
+When detected, the HTTP/1.x Layer detaches the underlying stream (`http1.Layer.DetachStream`) and the WebSocket Layer takes over. The detached `(reader, writer, closer)` triple — typically with a `*bufio.Reader` so any post-CRLFCRLF bytes are visible — together with a `streamID` and a `Role` (Client / Server) constructs the WSLayer.
 
 !!! note
     WebSocket upgrade requests bypass the safety filter intentionally. Upgrade requests do not carry a meaningful body, so input filtering would not add value.
@@ -42,31 +44,25 @@ For WSS connections, the WebSocket upgrade happens inside an HTTPS MITM tunnel:
 
 The WSS path uses the configured TLS transport (e.g., uTLS fingerprint) for the upstream connection, and records TLS metadata (version, cipher suite, server certificate subject) on the flow.
 
-## Message-level recording
+## Frame-per-Envelope recording
 
-Each WebSocket data frame is recorded as a flow message:
+Each parsed wire frame produces exactly one `WSMessage` envelope. Control frames (Ping / Pong / Close) and continuation frames are **not** coalesced; the Pipeline observes them individually. The Layer never auto-responds to Ping (MITM transparency).
 
 ### Text frames (opcode `0x1`)
 
-Stored in the message `body` field as UTF-8 text. This makes text messages searchable and human-readable in the flow store.
+Stored in `WSMessage.Payload` as UTF-8 text bytes.
 
 ### Binary frames (opcode `0x2`)
 
-Stored in the message `raw_bytes` field. Binary payloads are preserved exactly as received.
+Stored in `WSMessage.Payload` as raw bytes. Binary payloads are preserved exactly as received.
 
 ### Control frames
 
-Control frames (Close `0x8`, Ping `0x9`, Pong `0xA`) are recorded with their payload in `raw_bytes`. A Close frame terminates the relay.
+Control frames (Close `0x8`, Ping `0x9`, Pong `0xA`) are emitted as their own envelopes. A Close frame terminates the Channel.
 
-### Message metadata
+### Wire-fidelity bytes
 
-Each recorded message includes metadata:
-
-| Key | Value |
-|-----|-------|
-| `opcode` | Frame opcode as integer (1=text, 2=binary, 8=close, 9=ping, 10=pong) |
-| `fin` | Always `"true"` for recorded messages (fragments are assembled) |
-| `masked` | `"true"` if the frame was masked (client-to-server frames) |
+`Envelope.Raw` carries the verbatim wire bytes for every frame. RSV2/RSV3 bits are observable only on `Envelope.Raw` — the `WSMessage` struct does not surface them as fields. On `Send` the Layer always emits `RSV2=RSV3=0`; only `RSV1` is set, when permessage-deflate compression is applied.
 
 ## Direction tracking
 
@@ -77,7 +73,7 @@ Every message is recorded with a direction:
 
 Messages use an atomic sequence counter shared across both directions, preserving the interleaved ordering of the conversation.
 
-## Fragment assembly
+## Fragment handling
 
 WebSocket allows messages to be split across multiple frames using the fragmentation mechanism:
 
@@ -85,7 +81,9 @@ WebSocket allows messages to be split across multiple frames using the fragmenta
 2. Continuation frames: opcode `0x0` with `FIN=0`
 3. Final frame: opcode `0x0` with `FIN=1`
 
-The proxy assembles fragmented messages before recording them, so each recorded message represents a complete logical message. Fragment accumulation is capped at a configurable maximum size to prevent memory exhaustion. If a fragmented message exceeds the limit, the proxy sends a Close frame with status code 1009 (Message Too Big) and terminates the connection.
+Each fragment is emitted as its own envelope. For uncompressed messages, every fragment carries that fragment's raw payload bytes verbatim. For compressed (permessage-deflate) messages, the FIN frame's envelope carries the decompressed bytes of the entire reassembled message; the preceding continuation envelopes carry the compressed wire bytes for that fragment.
+
+Send-side fragmentation is the caller's responsibility — the Layer emits exactly one wire frame per `Send` call.
 
 ## Flow structure
 
@@ -99,20 +97,15 @@ The flow starts when the WebSocket upgrade succeeds and ends when either side cl
 
 ## Plugin hooks
 
-The WebSocket handler dispatches plugin hooks for each data frame (not control frames):
+The WebSocket Layer participates in the standard Pipeline. Plugin authors register hooks via the pluginv2 engine using the `(protocol, event, phase)` triple — for example `(ws, on_frame, pre)` to observe each frame envelope before intercept.
 
-| Direction | Hooks dispatched |
-|-----------|-----------------|
-| Client to server | `on_receive_from_client` then `on_before_send_to_server` |
-| Server to client | `on_receive_from_server` then `on_before_send_to_client` |
+Plugin capabilities (per the canonical 8-step Pipeline):
 
-Plugin capabilities:
+- **Drop frames** via the Pre-Intercept phase
+- **Modify payloads** via Transform / Macro Steps
+- **Observe** without modification via Post phase
 
-- **Drop frames**: returning `ActionDrop` silently skips the frame (only supported in the `send` direction for `on_receive_from_client`)
-- **Modify payloads**: returning modified `payload` in the result data updates the frame payload before forwarding
-- **Size limits**: if a plugin-modified payload exceeds the maximum WebSocket message size, the modification is discarded and the original payload is preserved
-
-Control frames (Close, Ping, Pong) are **not** sent to plugins. This prevents plugins from dropping Close frames, which would cause the relay to hang.
+Control frames (Close, Ping, Pong) are emitted as their own envelopes and are observable by plugins. See the [Plugin hook reference](../plugins/hook-reference.md) for the full surface.
 
 ## Payload size limits
 
@@ -147,20 +140,22 @@ Intercepted WebSocket frames include the following metadata:
 
 You can modify the frame payload using `override_body` with the `modify_and_forward` action, or drop the frame entirely with the `drop` action.
 
-## permessage-deflate
+## permessage-deflate (RFC 7692)
 
-The proxy supports the `permessage-deflate` WebSocket extension (RFC 7692). When the upstream server negotiates permessage-deflate in the `Sec-WebSocket-Extensions` response header, the proxy:
+permessage-deflate is opt-in via the Layer's `WithDeflateEnabled` master switch plus per-direction `WithClientDeflate` / `WithServerDeflate` options. When the upstream server negotiates permessage-deflate in the `Sec-WebSocket-Extensions` response header:
 
-1. **Forwards compressed frames on the wire** -- Compressed frames are relayed between client and server without re-encoding, preserving wire transparency.
-2. **Decompresses frames before recording** -- Stored message data is always the decompressed plaintext, making recorded payloads readable and searchable.
-3. **Records compression metadata** -- A `compressed: true` metadata flag is set on messages that were decompressed for storage.
+1. **Wire-faithful raw bytes** — `Envelope.Raw` always carries the verbatim wire bytes (compressed if compression was used).
+2. **Decompressed payload on the FIN frame** — for fragmented compressed messages, the FIN frame's `WSMessage.Payload` is the decompressed bytes of the entire reassembled message. Continuation envelopes carry the per-fragment compressed bytes; a single fragment is rarely a complete deflate stream and applications should not attempt to decompress one in isolation.
+3. **Single-frame compressed messages** — when `Fin=true` on the start frame, `WSMessage.Payload` carries the decompressed bytes directly.
 
-The proxy respects `server_no_context_takeover` and `client_no_context_takeover` parameters, and configures decompression window bits per the negotiated extension parameters.
+The Layer respects `server_no_context_takeover` and `client_no_context_takeover` parameters and configures decompression window bits per the negotiated extension parameters.
 
 ## Limitations
 
-- **No subprotocol awareness** -- the proxy treats all WebSocket traffic as opaque frames regardless of the negotiated subprotocol
-- **Frame-level forwarding** -- frames are forwarded individually, preserving masking and fragmentation as received from the client
+- **No subprotocol awareness** -- the Layer treats all WebSocket traffic as opaque frames regardless of the negotiated subprotocol
+- **Send-side fragmentation** -- the Layer emits exactly one wire frame per `Send` call; fragmentation is the caller's responsibility
+- **Mask key regeneration** -- on `Send`, `WSMessage.Mask` is informational. The Layer regenerates the 4-byte mask key from `crypto/rand` for every `RoleClient` frame per RFC 6455 §5.3 strong-entropy requirement
+- **Late-RST detection** -- the Layer has no background watcher goroutine; if the wire is closed by the peer between `Next` calls, the next `Next` observes either `io.EOF` (graceful) or `*layer.StreamError{Code: ErrorAborted}`
 
 ## Related pages
 
@@ -168,4 +163,6 @@ The proxy respects `server_no_context_takeover` and `client_no_context_takeover`
 - [HTTPS MITM](https-mitm.md) -- WSS connections through TLS tunnels
 - [Intercept feature](../features/intercept.md) -- intercept rules and the WebSocket frame phase
 - [WebUI: Intercept](../webui/intercept.md) -- managing intercepted WebSocket frames in the UI
+- [resend_ws](../tools/resend-ws.md) -- replay a WebSocket message frame
+- [fuzz_ws](../tools/fuzz-ws.md) -- mutate and replay WebSocket message frames
 - [Plugin hook reference](../plugins/hook-reference.md) -- detailed hook documentation

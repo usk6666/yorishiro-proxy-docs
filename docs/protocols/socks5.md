@@ -2,13 +2,15 @@
 
 yorishiro-proxy includes a built-in SOCKS5 proxy (RFC 1928) that enables routing arbitrary TCP traffic through the proxy. This is particularly useful with tools like `proxychains` that can redirect any program's network traffic through a SOCKS5 proxy.
 
+SOCKS5 is a transport — not an application Layer. The handshake lives in the connector (`internal/connector/socks5_handler.go`), not under `internal/layer/`. Once the SOCKS5 CONNECT completes, the connector runs the same protocol detection it uses on a direct listener, so the post-handshake byte stream is wrapped in whichever Layer matches (HTTP/1.x, HTTP/2 over TLS via `tlslayer/`, or `bytechunk/`).
+
 ## SOCKS5 handshake
 
-The proxy implements the SOCKS5 protocol as defined in RFC 1928 and RFC 1929:
+The connector implements the SOCKS5 protocol as defined in RFC 1928 and RFC 1929:
 
 ### Detection
 
-SOCKS5 connections are identified by the first byte: `0x05` (the SOCKS version number). The proxy uses a quick single-byte peek for fast detection, avoiding the latency of waiting for more bytes.
+SOCKS5 connections are identified by the first byte: `0x05` (the SOCKS version number). The connector uses a quick single-byte peek for fast detection, avoiding the latency of waiting for more bytes.
 
 ### Method negotiation
 
@@ -70,26 +72,28 @@ Only the `CONNECT` command (`0x01`) is supported. `BIND` and `UDP ASSOCIATE` ret
 
 ## Post-handshake protocol detection
 
-After the SOCKS5 handshake completes, the proxy performs protocol detection on the tunneled connection:
+After the SOCKS5 handshake completes, the connector runs the same detect logic it uses on a direct listener and builds a `ConnectionStack` accordingly:
 
 ```mermaid
 flowchart TD
     A[SOCKS5 handshake complete] --> B{Peek bytes}
     B -->|TLS ClientHello<br>0x16 0x03| C{Passthrough?}
-    C -->|Yes| D[Raw TCP relay]
-    C -->|No| E[TLS MITM]
+    C -->|Yes| D[bytechunk Layer]
+    C -->|No| E[tlslayer + ALPN]
     E --> F{ALPN}
-    F -->|h2| G[HTTP/2 handler]
-    F -->|http/1.1| H[HTTP/1.x handler]
-    B -->|HTTP method prefix| I[HTTP/1.x handler]
+    F -->|h2| G[HTTP/2 Layer]
+    F -->|http/1.1| H[HTTP/1.x Layer]
+    F -->|other| D
+    B -->|HTTP method prefix| H
+    B -->|HTTP/2 preface| G
     B -->|Other| D
 ```
 
-1. **TLS ClientHello** (bytes `0x16 0x03`): if the target is in the passthrough list, the proxy performs a raw TCP relay. Otherwise, the proxy closes the pre-established upstream connection and delegates to the HTTP handler's `HandleTunnelMITM` for TLS interception, ALPN negotiation, and protocol dispatch.
+1. **TLS ClientHello** (bytes `0x16 0x03`): if the target is in the passthrough list, the connector wires `bytechunk/` for opaque relay. Otherwise, the connector closes the pre-established upstream connection and runs the standard CONNECT-style flow: `tlslayer/` for client + upstream, ALPN routing for the inner Layer.
 
-2. **HTTP method prefix**: if plaintext HTTP is detected, the proxy delegates to the HTTP handler. The SOCKS5 target is stored in the context so the HTTP handler can reconstruct absolute URLs.
+2. **HTTP method prefix**: the connector wires the [HTTP/1.x](http.md) Layer. The SOCKS5 target is stored in the context so the Layer can reconstruct absolute URLs.
 
-3. **Other traffic**: falls through to a raw bidirectional TCP relay.
+3. **Other traffic**: the connector falls through to the `bytechunk/` Layer.
 
 ## Username/password authentication
 
@@ -108,16 +112,9 @@ Configure SOCKS5 authentication via the `configure` tool:
 
 Per-listener authentication is also supported -- you can configure different credentials for different SOCKS5 listeners.
 
-## Protocol identifiers
+## Recorded envelopes
 
-When traffic arrives through a SOCKS5 tunnel, the recorded flow's protocol includes a `SOCKS5+` prefix:
-
-| Inner protocol | Recorded as |
-|---------------|-------------|
-| HTTPS (TLS MITM) | `SOCKS5+HTTPS` |
-| HTTP (plaintext) | `SOCKS5+HTTP` |
-
-SOCKS5 metadata is also stored in flow tags:
+`Envelope.Protocol` reflects the inner Layer (e.g. `http`, `ws`, `grpc`, `raw`) — SOCKS5 itself is a transport, not a Message protocol. The original SOCKS5 CONNECT target and authentication state ride on flow tags / context:
 
 | Tag | Description |
 |-----|-------------|
@@ -162,42 +159,31 @@ proxychains nmap -sT -p 80,443 target.example.com
 
 All TCP traffic from the proxied command flows through yorishiro-proxy. HTTPS traffic is intercepted (MITM) and recorded. Plaintext HTTP is also recorded.
 
-### Step 4: Query SOCKS5 flows
+### Step 4: Query SOCKS5-tunneled flows
+
+Filter by the inner Layer's protocol (e.g. `http` for HTTPS-via-SOCKS5) and use the `socks5_target` flow tag to scope to a specific tunnel target:
 
 ```json
 // query
 {
   "resource": "flows",
-  "filter": {"protocol": "SOCKS5+HTTPS"}
+  "filter": {"protocol": "http"}
 }
 ```
 
 ## Plugin hooks
 
-The SOCKS5 handler dispatches the `on_socks5_connect` lifecycle hook after a successful SOCKS5 CONNECT:
-
-| Key | Description |
-|-----|-------------|
-| `event` | `"socks5_connect"` |
-| `target_host` | Hostname portion of the target |
-| `target_port` | Port number |
-| `target` | Full `host:port` string |
-| `auth_method` | `"none"` or `"username_password"` |
-| `auth_user` | Authenticated username (empty if no auth) |
-| `client_addr` | Client's remote address |
-
-This hook is observe-only (fail-open) and cannot block the connection.
+The SOCKS5 handler dispatches the `(socks5, on_connect)` lifecycle hook after a successful SOCKS5 CONNECT and **before** the connector builds the inner ConnectionStack. A `DROP` action returned from this hook closes the tunnel before any inner Layer is wired up. See the [Plugin hook reference](../plugins/hook-reference.md) for the full surface.
 
 ## Target scope and rate limiting
 
-The SOCKS5 handler enforces target scope and rate limit rules before establishing the upstream connection. If a target is blocked by scope rules, the proxy responds with SOCKS5 reply code `0x02` (connection not allowed by ruleset). Rate-limited targets also receive the same error reply.
+The SOCKS5 negotiator enforces target scope and rate limit rules before establishing the upstream connection. If a target is blocked by scope rules, the negotiator responds with SOCKS5 reply code `0x02` (connection not allowed by ruleset). Rate-limited targets also receive the same error reply.
 
 ## Limitations
 
 - **CONNECT only** -- `BIND` (0x02) and `UDP ASSOCIATE` (0x03) commands are not supported
 - **No GSSAPI** -- only NO AUTH and USERNAME/PASSWORD authentication methods are supported
 - **Single hop** -- the SOCKS5 proxy does not support chaining through another SOCKS5 proxy
-- **No flow recording for raw relay** -- when traffic falls through to the raw TCP relay path (non-TLS, non-HTTP), data chunks are not recorded to the flow store via the SOCKS5 handler itself
 
 ## Related pages
 

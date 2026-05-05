@@ -1,110 +1,130 @@
 # intercept
 
-Act on intercepted requests or responses in the intercept queue. Intercepted items are held by the proxy until you decide to release, modify, or drop them.
+Act on intercepted requests, responses, or streaming frames currently held by the proxy. Held items are released, modified and forwarded, or dropped.
 
-Items have a `phase` field indicating when they were intercepted: `"request"` (before sending to the upstream server) or `"response"` (after receiving from the upstream server).
+The intercept rule engine dispatches via type-switch on the held envelope's `Message`, routing to per-protocol rule engines (`internal/rules/{http,ws,grpc,sse,raw,common}/`). The MCP tool surface accepts a discriminated union of typed modify payloads -- exactly one of `http`, `ws`, `grpc_start`, `grpc_data`, or `raw` must be supplied for `modify_and_forward`, and it must match the held envelope's `Message` type.
 
 ## Parameters
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `action` | string | Yes | Action to perform: `release`, `modify_and_forward`, `drop` |
-| `params` | object | Yes | Action-specific parameters (see below) |
+| `params` | object | Yes | Common parameters (see below) |
+| `http` | object | Conditional | Typed modify payload for an `HTTPMessage` envelope |
+| `ws` | object | Conditional | Typed modify payload for a `WSMessage` envelope |
+| `grpc_start` | object | Conditional | Typed modify payload for a `GRPCStartMessage` envelope |
+| `grpc_data` | object | Conditional | Typed modify payload for a `GRPCDataMessage` envelope |
+| `raw` | object | Conditional | Typed modify payload for a `RawMessage` envelope |
 
-### Common parameters
+### params
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `intercept_id` | string | Yes | ID of the intercepted request/response |
-| `mode` | string | No | Forwarding mode: `"structured"` (default) or `"raw"`. See [raw bytes mode](#raw-bytes-mode) |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `intercept_id` | string | Yes | ID of the held envelope |
+| `mode` | string | No | Forwarding mode: `"structured"` (default) routes through the typed dispatch; `"raw"` expects `raw_override_base64` and forwards a synthetic `RawMessage` envelope verbatim |
+| `raw_override_base64` | string | Conditional | Base64-encoded raw bytes for raw-mode forwarding (max 10 MiB). Required when `mode` is `"raw"` and the held envelope is non-Raw |
 
 ## Actions
 
 ### release
 
-Forward the intercepted item as-is without any modifications.
-
-In structured mode (default), the item is forwarded through the normal HTTP library pipeline. In raw mode (`"mode": "raw"`), the original raw bytes captured on the wire are forwarded directly, bypassing HTTP library serialization.
+Forward the held envelope as-is.
 
 ### modify_and_forward
 
-Forward the intercepted item with mutations. The available parameters depend on the `mode`.
-
-#### Structured mode parameters (default)
-
-Use request parameters for request-phase items and response parameters for response-phase items.
-
-**Request phase:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `override_method` | string | No | Override HTTP method |
-| `override_url` | string | No | Override target URL |
-| `override_headers` | object | No | Header overrides as key-value pairs |
-| `add_headers` | object | No | Headers to add |
-| `remove_headers` | string[] | No | Header names to remove |
-| `override_body` | string | No | Override request body |
-
-**Response phase:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `override_status` | integer | No | Override HTTP status code |
-| `override_response_headers` | object | No | Response header overrides |
-| `add_response_headers` | object | No | Response headers to add |
-| `remove_response_headers` | string[] | No | Response header names to remove |
-| `override_response_body` | string | No | Override response body |
-
-#### Raw mode parameters
-
-When `mode` is `"raw"`, all structured (L7) override fields are ignored. Instead, provide:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `raw_override_base64` | string | Yes | Base64-encoded raw bytes that replace the entire request or response on the wire |
+Apply a typed modify payload (matching the held envelope's `Message` type) and forward the result. The typed modify schemas are described below. With `mode="raw"` plus `raw_override_base64`, the proxy builds a synthetic `RawMessage` envelope from the supplied bytes and forwards them verbatim regardless of the original protocol.
 
 ### drop
 
-Discard the intercepted item. Returns a 502 Bad Gateway response to the client.
+Discard the held envelope and unblock the pipeline.
+
+## Typed modify payloads
+
+Headers and metadata are always **ordered arrays** of `{name, value}` objects. Map shapes are rejected to preserve wire fidelity (RFC-001 §3.1: no normalization).
+
+### http
+
+For `HTTPMessage` envelopes. Pointer-style fields (`*string`, `*int`, `*bool`) distinguish "field omitted" from "field set to zero value"; an omitted field leaves the held envelope's field untouched.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `method` | string | HTTP method override (request side) |
+| `scheme` | string | Scheme override (request side) |
+| `authority` | string | Authority override (request side) |
+| `path` | string | Request path override |
+| `raw_query` | string | Raw query string override |
+| `status` | integer | HTTP status code override (response side) |
+| `status_reason` | string | HTTP/1.x status reason phrase override |
+| `headers` | array | Ordered header list replacement |
+| `trailers` | array | Ordered trailer list replacement |
+| `body` | string | Body replacement (`text` or `base64` per `body_encoding`) |
+| `body_encoding` | string | `"text"` or `"base64"` |
+| `body_patches` | array | Body patches applied on top of the body replacement |
+| `auto_content_length` | boolean | Auto-sync `Content-Length` on body change. Default `true`; set `false` to preserve CL/TE for smuggling tests |
+
+### ws
+
+For `WSMessage` envelopes.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `opcode` | string or integer | Opcode name (`text`, `binary`, `close`, `ping`, `pong`, `continuation`) or numeric opcode in `[0, 15]` |
+| `fin` | boolean | FIN bit override |
+| `payload` | string | Frame payload (`text` or `base64` per `body_encoding`) |
+| `body_encoding` | string | `"text"` or `"base64"` |
+| `close_code` | integer | RFC 6455 status code (Close frames only) |
+| `close_reason` | string | Close reason text (Close frames only) |
+
+### grpc_start
+
+For `GRPCStartMessage` envelopes (HEADERS frame opening one side of an RPC).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `service` | string | gRPC service name override |
+| `method` | string | gRPC method name override |
+| `encoding` | string | `grpc-encoding` override |
+| `metadata` | array | Ordered metadata list replacement (transport pseudo-headers excluded) |
+
+Trailers belong to a distinct `GRPCEndMessage` envelope and are out of scope for `grpc_start`.
+
+### grpc_data
+
+For `GRPCDataMessage` envelopes (one length-prefixed message on a gRPC stream).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `payload` | string | Decompressed gRPC payload (`text` or `base64` per `payload_encoding`) |
+| `payload_encoding` | string | `"text"` or `"base64"` |
+| `compressed` | boolean | Set the compression bit in the LPM prefix |
+| `end_stream` | boolean | `END_STREAM` flag on the carrying H2 DATA frame |
+
+### raw
+
+For `RawMessage` envelopes. `bytes_override` and `patches` are mutually exclusive.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `bytes_override` | string | Replacement bytes (`text` or `base64` per `bytes_encoding`) |
+| `bytes_encoding` | string | `"text"` or `"base64"` |
+| `patches` | array | Byte-level patches applied to the held envelope's `RawMessage.Bytes` |
 
 ## Response
 
-All actions return:
-
 | Field | Type | Description |
 |-------|------|-------------|
-| `intercept_id` | string | ID of the intercepted item |
+| `intercept_id` | string | ID of the held envelope |
 | `action` | string | Action performed |
-| `status` | string | Result status (`"released"`, `"forwarded"`, `"forwarded_raw"`, `"dropped"`) |
-| `phase` | string | `"request"`, `"response"`, or `"websocket_frame"` |
-| `protocol` | string | `"http"` or `"websocket"` |
-
-### Raw bytes fields
-
-When raw bytes are available for the intercepted item, the response includes additional fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `raw_bytes_available` | boolean | `true` when raw bytes are present |
-| `raw_bytes_size` | integer | Size of the raw bytes in bytes |
-| `raw_bytes_encoding` | string | Encoding of the `raw_bytes` field (`"text"` or `"base64"`) |
-| `raw_bytes` | string | The raw captured bytes (subject to output filtering) |
-
-## Raw bytes mode
-
-The `mode` parameter controls how the proxy forwards intercepted items:
-
-- **`"structured"`** (default) -- The proxy applies your modifications at the HTTP (L7) layer. The request or response is serialized through the standard HTTP library, which may normalize headers, adjust `Content-Length`, and apply transfer encoding.
-- **`"raw"`** -- The proxy sends bytes directly on the wire, bypassing HTTP library serialization entirely. This gives you full control over every byte of the request or response.
-
-Raw mode is available for both `release` and `modify_and_forward`:
-
-- **`release` + raw mode** -- Forwards the original raw bytes as captured on the wire, without HTTP library normalization.
-- **`modify_and_forward` + raw mode** -- Forwards your `raw_override_base64` bytes as-is. Requires `raw_override_base64`.
+| `status` | string | Result status (`"released"`, `"forwarded"`, `"dropped"`) |
+| `protocol` | string | Held envelope's message-type discriminator (`"http"`, `"websocket"`, `"grpc_start"`, `"grpc_data"`, `"grpc_end"`, `"raw"`) |
+| `direction` | string | Envelope direction (`"send"`, `"receive"`) |
+| `matched_rules` | string[] | Rule names that fired to hold the envelope (when present) |
+| `flow_id` | string | Flow id of the held envelope (when present) |
+| `stream_id` | string | Stream id of the held envelope (when present) |
 
 ## Examples
 
-### Release an intercepted request
+### Release a held HTTP request
 
 ```json
 // intercept
@@ -114,39 +134,52 @@ Raw mode is available for both `release` and `modify_and_forward`:
 }
 ```
 
-### Modify and forward a request (structured mode)
+### Modify and forward an HTTP request
 
 ```json
 // intercept
 {
   "action": "modify_and_forward",
-  "params": {
-    "intercept_id": "int-abc-123",
-    "override_method": "POST",
-    "override_headers": {"Authorization": "Bearer injected-token"},
-    "override_body": "{\"role\":\"admin\"}"
+  "params": {"intercept_id": "int-abc-123"},
+  "http": {
+    "method": "POST",
+    "headers": [
+      {"name": "Authorization", "value": "Bearer injected-token"}
+    ],
+    "body": "{\"role\":\"admin\"}"
   }
 }
 ```
 
-### Modify and forward a response
+### Modify and forward a WebSocket frame
 
 ```json
 // intercept
 {
   "action": "modify_and_forward",
-  "params": {
-    "intercept_id": "int-resp-456",
-    "override_status": 200,
-    "override_response_headers": {"X-Custom": "modified"},
-    "override_response_body": "{\"authorized\": true}"
+  "params": {"intercept_id": "int-ws-456"},
+  "ws": {
+    "opcode": "text",
+    "payload": "{\"action\":\"admin\"}"
   }
 }
 ```
 
-### Modify and forward with raw bytes
+### Patch a gRPC payload
 
-Send a hand-crafted HTTP request with intentional CL/TE ambiguity for smuggling testing:
+```json
+// intercept
+{
+  "action": "modify_and_forward",
+  "params": {"intercept_id": "int-grpc-789"},
+  "grpc_data": {
+    "payload": "AAAAAAk=",
+    "payload_encoding": "base64"
+  }
+}
+```
+
+### Forward synthetic raw bytes (smuggling test)
 
 ```json
 // intercept
@@ -160,20 +193,7 @@ Send a hand-crafted HTTP request with intentional CL/TE ambiguity for smuggling 
 }
 ```
 
-### Release with raw bytes (bypass HTTP normalization)
-
-```json
-// intercept
-{
-  "action": "release",
-  "params": {
-    "intercept_id": "int-abc-123",
-    "mode": "raw"
-  }
-}
-```
-
-### Drop an intercepted request
+### Drop a held request
 
 ```json
 // intercept

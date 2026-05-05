@@ -94,7 +94,7 @@ For detailed setup instructions, see the [Getting started](getting-started/insta
 
 ## MCP tools
 
-All proxy operations are exposed through eleven MCP tools:
+All proxy operations are exposed through seventeen MCP tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -102,13 +102,19 @@ All proxy operations are exposed through eleven MCP tools:
 | [`proxy_stop`](tools/proxy-stop.md) | Graceful shutdown of one or all listeners |
 | [`configure`](tools/configure.md) | Runtime configuration changes (upstream proxy, capture scope, TLS passthrough, intercept rules, auto-transform, connection limits) |
 | [`query`](tools/query.md) | Unified information retrieval: flows, flow details, messages, proxy status, config, CA certificate, intercept queue, macros, fuzz jobs/results |
-| [`resend`](tools/resend.md) | Replay recorded requests with mutations and compare two flows structurally |
-| [`fuzz`](tools/fuzz.md) | Execute fuzz testing campaigns with payload sets, positions, concurrency control, and stop conditions |
+| [`resend_http`](tools/resend-http.md) | Replay recorded HTTP/HTTPS requests with mutations (method, URL, headers, body, JSON/regex patches) |
+| [`resend_ws`](tools/resend-ws.md) | Replay a WebSocket message frame with optional payload mutations |
+| [`resend_grpc`](tools/resend-grpc.md) | Replay a gRPC envelope (Length-Prefixed Message) with optional payload mutations |
+| [`resend_raw`](tools/resend-raw.md) | Replay raw TCP/TLS bytes with offset, find/replace, and full-buffer patches |
+| [`fuzz_http`](tools/fuzz-http.md) | Execute HTTP fuzz campaigns with payload sets, positions, concurrency control, and stop conditions |
+| [`fuzz_ws`](tools/fuzz-ws.md) | Fuzz WebSocket message frames with payload injection |
+| [`fuzz_grpc`](tools/fuzz-grpc.md) | Fuzz gRPC envelopes with payload injection |
+| [`fuzz_raw`](tools/fuzz-raw.md) | Fuzz raw TCP/TLS bytes at byte offsets |
 | [`macro`](tools/macro.md) | Define and execute multi-step macro workflows with variable extraction, guards, and hooks |
 | [`intercept`](tools/intercept.md) | Act on intercepted requests: release, modify and forward, or drop |
 | [`manage`](tools/manage.md) | Manage flow data (delete/export/import) and CA certificate regeneration |
 | [`security`](tools/security.md) | Configure target scope rules, rate limits, diagnostic budgets, and SafetyFilter (Policy Layer + Agent Layer) |
-| [`plugin`](tools/plugin.md) | List, reload, enable, and disable Starlark plugins at runtime |
+| [`plugin_introspect`](tools/plugin-introspect.md) | List loaded Starlark plugins and their (protocol, event, phase) hook registrations (read-only) |
 
 See the [MCP tools overview](tools/overview.md) for details.
 
