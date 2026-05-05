@@ -41,7 +41,7 @@ A return of `DROP` or `RESPOND` from an event whose surface forbids it is logged
 
 ## Phases
 
-Pipeline events accept `pre_pipeline` (default) or `post_pipeline`. See [Writing plugins](writing-plugins.md#registerhookprotocol-event-fn-phasepre_pipeline) for the semantics.
+Pipeline events accept `pre_pipeline` (default) or `post_pipeline`. See [Writing plugins](writing-plugins.md) for the semantics.
 
 Lifecycle events have phase `none`. Passing any `phase=` argument to `register_hook` for a lifecycle event is a load-time error:
 

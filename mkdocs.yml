@@ -81,13 +81,19 @@ nav:
       - proxy_stop: tools/proxy-stop.md
       - configure: tools/configure.md
       - query: tools/query.md
-      - resend: tools/resend.md
-      - fuzz: tools/fuzz.md
+      - resend_http: tools/resend-http.md
+      - resend_ws: tools/resend-ws.md
+      - resend_grpc: tools/resend-grpc.md
+      - resend_raw: tools/resend-raw.md
+      - fuzz_http: tools/fuzz-http.md
+      - fuzz_ws: tools/fuzz-ws.md
+      - fuzz_grpc: tools/fuzz-grpc.md
+      - fuzz_raw: tools/fuzz-raw.md
       - macro: tools/macro.md
       - intercept: tools/intercept.md
       - manage: tools/manage.md
       - security: tools/security.md
-      - plugin: tools/plugin.md
+      - plugin_introspect: tools/plugin-introspect.md
   - Features:
       - Resender: features/resender.md
       - Fuzzer: features/fuzzer.md
@@ -98,13 +104,13 @@ nav:
       - SafetyFilter: features/safety-filter.md
       - Rate limits & budgets: features/rate-limits.md
       - Flow export & import: features/flow-export-import.md
-      - Comparer: features/comparer.md
       - Technology detection: features/technology-detection.md
   - Protocols:
       - HTTP: protocols/http.md
       - HTTPS MITM: protocols/https-mitm.md
       - HTTP/2: protocols/http2.md
       - gRPC: protocols/grpc.md
+      - gRPC-Web: protocols/grpc-web.md
       - WebSocket: protocols/websocket.md
       - SSE: protocols/sse.md
       - Raw TCP: protocols/raw-tcp.md
@@ -124,7 +130,6 @@ nav:
       - Writing plugins: plugins/writing-plugins.md
       - Hook reference: plugins/hook-reference.md
       - Data map reference: plugins/data-map-reference.md
-      - Codec plugins: plugins/codec-plugins.md
       - Examples: plugins/examples.md
   - Configuration:
       - CLI flags: configuration/cli-flags.md

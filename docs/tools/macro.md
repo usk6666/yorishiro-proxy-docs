@@ -195,5 +195,5 @@ Remove a stored macro definition.
 
 - [Macros](../features/macros.md) -- Macro feature guide
 - [query](query.md) -- Query macros with `macros` and `macro` resources
-- [resend](resend.md) -- Resend requests with macro hooks
-- [fuzz](fuzz.md) -- Fuzz testing with macro hooks
+- [resend_http](resend-http.md), [resend_ws](resend-ws.md), [resend_grpc](resend-grpc.md), [resend_raw](resend-raw.md) -- typed per-protocol resend tools
+- [fuzz_http](fuzz-http.md), [fuzz_ws](fuzz-ws.md), [fuzz_grpc](fuzz-grpc.md), [fuzz_raw](fuzz-raw.md) -- typed per-protocol fuzz tools
