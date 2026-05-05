@@ -19,7 +19,7 @@ Unified information query tool. Retrieve flows, flow details, messages, proxy st
 
 | Field | Type | Applies to | Description |
 |-------|------|------------|-------------|
-| `protocol` | string | flows | Protocol filter (e.g. `"HTTP/1.x"`, `"HTTPS"`, `"WebSocket"`, `"HTTP/2"`, `"gRPC"`, `"TCP"`) |
+| `protocol` | string | flows | Canonical Message-type family. One of `"http"`, `"ws"`, `"grpc"`, `"grpc-web"`, `"sse"`, `"raw"`, `"tls-handshake"`. See [Protocol family filter](#protocol-family-filter) |
 | `method` | string | flows | HTTP method filter (e.g. `"GET"`, `"POST"`) |
 | `url_pattern` | string | flows | URL substring match |
 | `status_code` | integer | flows, fuzz_results | HTTP status code filter |
@@ -33,6 +33,22 @@ Unified information query tool. Retrieve flows, flow details, messages, proxy st
 | `outliers_only` | boolean | fuzz_results | Return only outlier results |
 | `status` | string | fuzz_jobs | Job status filter (e.g. `"running"`, `"completed"`) |
 | `tag` | string | fuzz_jobs | Job tag filter (exact match) |
+
+### Protocol family filter
+
+The `filter.protocol` value matches a canonical `Envelope.Protocol` family. Each canonical value expands across every wire spelling the proxy may have recorded for that family:
+
+| Value | Matches |
+|-------|---------|
+| `http` | HTTP/1.x and HTTP/2 traffic, including TLS variants and SOCKS5-tunnelled spellings |
+| `ws` | Native WebSocket and SOCKS5-tunnelled WebSocket |
+| `grpc` | Native gRPC over HTTP/2 |
+| `grpc-web` | gRPC-Web (HTTP/1.1 and HTTP/2 transports) |
+| `sse` | Server-Sent Events |
+| `raw` | TCP-passthrough and `Raw` flows |
+| `tls-handshake` | TLS handshake records observed without a higher-level decode |
+
+Only these canonical values are accepted -- the legacy literals (`HTTP/1.x`, `HTTPS`, `HTTP/2`, `WebSocket`, `gRPC`, `gRPC-Web`, `TCP`, `SOCKS5+...`) were retired in N9. Use `filter.scheme` to find all TLS flows (e.g. `scheme=https` returns HTTP/1.x + HTTP/2 + gRPC over TLS).
 
 ## Resources
 
@@ -157,7 +173,7 @@ Categories: `web_server`, `framework`, `language`, `cms`, `cdn`, `waf`, `js_fram
 // query
 {
   "resource": "flows",
-  "filter": {"protocol": "WebSocket"}
+  "filter": {"protocol": "ws"}
 }
 ```
 
