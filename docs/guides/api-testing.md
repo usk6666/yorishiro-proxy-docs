@@ -69,73 +69,58 @@ The response includes full request/response headers, body, status code, and timi
 
 ### Token replacement
 
-Test authorization boundaries by replacing the Bearer token with another user's token:
+Test authorization boundaries by replacing the Bearer token with another user's token. The `headers` field is a wholesale replacement; in practice fetch the original via `query` first and rebuild the list with your change. The examples below show just the changed entries for brevity.
 
 ```json
 // resend_http
 {
-  "action": "resend",
-  "params": {
-    "flow_id": "<flow-id>",
-    "override_headers": {
-      "Authorization": "Bearer <other-user-token>"
-    },
-    "tag": "auth-token-swap"
-  }
+  "flow_id": "<flow-id>",
+  "headers": [
+    {"name": "Authorization", "value": "Bearer <other-user-token>"}
+  ],
+  "tag": "auth-token-swap"
 }
 ```
 
 ### Removing authentication
 
-Test what happens when you remove the authentication header entirely:
+Test what happens when you remove the authentication header entirely. Rebuild `headers` from the recorded flow but omit the `Authorization` entry:
 
 ```json
 // resend_http
 {
-  "action": "resend",
-  "params": {
-    "flow_id": "<flow-id>",
-    "remove_headers": ["Authorization"],
-    "tag": "auth-removed"
-  }
+  "flow_id": "<flow-id>",
+  "headers": [
+    {"name": "Host", "value": "api.target.com"},
+    {"name": "Accept", "value": "application/json"}
+  ],
+  "tag": "auth-removed"
 }
 ```
 
 ### Fuzz authentication headers
 
-Test multiple authentication scenarios at once:
+Test multiple authentication scenarios at once. The `headers[N].value` path targets the Nth header in the recorded flow; inspect the flow with `query` first to find the index of `Authorization`.
 
 ```json
 // fuzz_http
 {
-  "action": "fuzz",
-  "params": {
-    "flow_id": "<flow-id>",
-    "attack_type": "sequential",
-    "positions": [
-      {
-        "id": "pos-0",
-        "location": "header",
-        "name": "Authorization",
-        "payload_set": "auth-values"
-      }
-    ],
-    "payload_sets": {
-      "auth-values": {
-        "type": "wordlist",
-        "values": [
-          "",
-          "Bearer ",
-          "Bearer invalid",
-          "Bearer null",
-          "Basic YWRtaW46YWRtaW4=",
-          "Bearer <low-privilege-token>",
-          "Bearer <expired-token>"
-        ]
-      }
-    },
-    "tag": "auth-fuzz"
-  }
+  "flow_id": "<flow-id>",
+  "positions": [
+    {
+      "path": "headers[0].value",
+      "payloads": [
+        "",
+        "Bearer ",
+        "Bearer invalid",
+        "Bearer null",
+        "Basic YWRtaW46YWRtaW4=",
+        "Bearer <low-privilege-token>",
+        "Bearer <expired-token>"
+      ]
+    }
+  ],
+  "tag": "auth-fuzz"
 }
 ```
 
@@ -146,14 +131,11 @@ Use a low-privilege user's token on admin endpoints:
 ```json
 // resend_http
 {
-  "action": "resend",
-  "params": {
-    "flow_id": "<admin-endpoint-flow-id>",
-    "override_headers": {
-      "Authorization": "Bearer <regular-user-token>"
-    },
-    "tag": "privilege-escalation"
-  }
+  "flow_id": "<admin-endpoint-flow-id>",
+  "headers": [
+    {"name": "Authorization", "value": "Bearer <regular-user-token>"}
+  ],
+  "tag": "privilege-escalation"
 }
 ```
 
@@ -180,31 +162,27 @@ Modify specific fields in a JSON request body using JSON path patches:
 ```json
 // resend_http
 {
-  "action": "resend",
-  "params": {
-    "flow_id": "<flow-id>",
-    "body_patches": [
-      {"json_path": "$.user.role", "value": "admin"},
-      {"json_path": "$.user.id", "value": 1}
-    ],
-    "tag": "role-escalation"
-  }
+  "flow_id": "<flow-id>",
+  "body_patches": [
+    {"json_path": "$.user.role", "value": "admin"},
+    {"json_path": "$.user.id", "value": 1}
+  ],
+  "tag": "role-escalation"
 }
 ```
 
 ### URL manipulation
 
-Change the target URL to access different resources:
+Change the target URL to access different resources by overriding individual HTTPMessage fields:
 
 ```json
 // resend_http
 {
-  "action": "resend",
-  "params": {
-    "flow_id": "<flow-id>",
-    "override_url": "https://api.target.com/api/v1/admin/users",
-    "tag": "url-manipulation"
-  }
+  "flow_id": "<flow-id>",
+  "scheme": "https",
+  "authority": "api.target.com",
+  "path": "/api/v1/admin/users",
+  "tag": "url-manipulation"
 }
 ```
 
@@ -215,40 +193,31 @@ Test if the server accepts different HTTP methods:
 ```json
 // resend_http
 {
-  "action": "resend",
-  "params": {
-    "flow_id": "<flow-id>",
-    "override_method": "DELETE",
-    "tag": "method-override"
-  }
+  "flow_id": "<flow-id>",
+  "method": "DELETE",
+  "tag": "method-override"
 }
 ```
 
 ### IDOR testing with fuzzer
 
-Enumerate object IDs to find insecure direct object references:
+Enumerate object IDs to find insecure direct object references. The typed `path` position substitutes the entire request path, so build the full path strings client-side; numeric range expansion is also a client-side concern now.
 
 ```json
 // fuzz_http
 {
-  "action": "fuzz",
-  "params": {
-    "flow_id": "<flow-id>",
-    "attack_type": "sequential",
-    "positions": [
-      {
-        "id": "pos-0",
-        "location": "path",
-        "match": "/users/(\\d+)",
-        "payload_set": "user-ids"
-      }
-    ],
-    "payload_sets": {
-      "user-ids": {"type": "range", "start": 1, "end": 100}
-    },
-    "rate_limit_rps": 5,
-    "tag": "idor-test"
-  }
+  "flow_id": "<flow-id>",
+  "positions": [
+    {
+      "path": "path",
+      "payloads": [
+        "/users/1",
+        "/users/50",
+        "/users/100"
+      ]
+    }
+  ],
+  "tag": "idor-test"
 }
 ```
 
@@ -265,82 +234,53 @@ Filter results to find successful accesses:
 
 ## Encoded payloads
 
-When the API expects encoded input, use codec chains to encode payloads before injection:
+Individual query-parameter substitution is no longer a typed path; clients construct full `raw_query` strings and apply any URL or other encoding before passing the payloads:
 
 ```json
 // fuzz_http
 {
-  "action": "fuzz",
-  "params": {
-    "flow_id": "<flow-id>",
-    "attack_type": "sequential",
-    "positions": [
-      {
-        "id": "pos-0",
-        "location": "query",
-        "name": "search",
-        "payload_set": "xss"
-      }
-    ],
-    "payload_sets": {
-      "xss": {
-        "type": "wordlist",
-        "values": [
-          "<script>alert(1)</script>",
-          "<img onerror=alert(1)>"
-        ],
-        "encoding": ["url_encode_query"]
-      }
-    },
-    "tag": "xss-encoded"
-  }
+  "flow_id": "<flow-id>",
+  "positions": [
+    {
+      "path": "raw_query",
+      "payloads": [
+        "search=%3Cscript%3Ealert(1)%3C%2Fscript%3E",
+        "search=%3Cimg+onerror%3Dalert(1)%3E"
+      ]
+    }
+  ],
+  "tag": "xss-encoded"
 }
 ```
 
-Available codecs include `base64`, `url_encode_query`, `url_encode_path`, `hex`, `html_entity`, `double_url_encode`, and more. Codecs are applied in order as a pipeline.
+For binary payloads set `encoding: "base64"` on the position; otherwise apply codecs (URL, hex, HTML entity, etc.) on the client before submitting.
 
 ## Automated fuzzing with stop conditions
 
-Configure automatic stop conditions to terminate the fuzz job when anomalies are detected:
+JSON-path body substitution is no longer a typed path; supply the full body for each variant via the `body` position. Latency-based and pattern-based auto-stop conditions are no longer supported — only `stop_on_5xx` is built in; cancel longer runs from the client.
 
 ```json
 // fuzz_http
 {
-  "action": "fuzz",
-  "params": {
-    "flow_id": "<flow-id>",
-    "attack_type": "sequential",
-    "positions": [
-      {
-        "id": "pos-0",
-        "location": "body_json",
-        "json_path": "$.search",
-        "payload_set": "sqli"
-      }
-    ],
-    "payload_sets": {
-      "sqli": {
-        "type": "wordlist",
-        "values": [
-          "normalvalue",
-          "' OR SLEEP(3)-- ",
-          "' OR SLEEP(3)#",
-          "1 OR SLEEP(3)",
-          "1; WAITFOR DELAY '0:0:3'--"
-        ]
-      }
-    },
-    "stop_on": {
-      "latency_threshold_ms": 5000,
-      "latency_baseline_multiplier": 3.0,
-      "latency_window": 5
-    },
-    "tag": "sqli-blind"
-  }
+  "flow_id": "<flow-id>",
+  "positions": [
+    {
+      "path": "body",
+      "payloads": [
+        "{\"search\": \"normalvalue\"}",
+        "{\"search\": \"' OR SLEEP(3)-- \"}",
+        "{\"search\": \"' OR SLEEP(3)#\"}",
+        "{\"search\": \"1 OR SLEEP(3)\"}",
+        "{\"search\": \"1; WAITFOR DELAY '0:0:3'--\"}"
+      ]
+    }
+  ],
+  "stop_on_5xx": true,
+  "tag": "sqli-blind"
 }
 ```
 
-The job stops automatically when response latency exceeds the threshold, indicating a potential SQL injection.
+Inspect per-variant `duration_ms` in the response to identify timing anomalies indicative of blind SQL injection.
 
 ## Managing fuzz jobs
 
@@ -351,24 +291,9 @@ The job stops automatically when response latency exceeds the threshold, indicat
 {"resource": "fuzz_jobs"}
 ```
 
-### Pause and resume
-
-```json
-// fuzz_http
-{"action": "fuzz_pause", "params": {"fuzz_id": "<fuzz-id>"}}
-```
-
-```json
-// fuzz_http
-{"action": "fuzz_resume", "params": {"fuzz_id": "<fuzz-id>"}}
-```
-
 ### Cancel a job
 
-```json
-// fuzz_http
-{"action": "fuzz_cancel", "params": {"fuzz_id": "<fuzz-id>"}}
-```
+The typed fuzz tools are synchronous; cancel a long run by canceling the MCP call from the client.
 
 ## Analyzing results
 
