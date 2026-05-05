@@ -1,180 +1,106 @@
-# Hook function reference
+# Hook reference
 
-This page documents all hook functions available to yorishiro-proxy Starlark plugins, including when each hook is called, what data it receives, and which actions are permitted.
+This page enumerates every `(protocol, event)` pair the `pluginv2` engine recognizes — the RFC-001 §9.3 hook surface — and documents the valid phases and action permissions for each.
 
-## Data hooks
+## The 17-entry surface table
 
-Data hooks are called during request/response processing. They participate in transaction context sharing via the `ctx` key.
+Every `register_hook(protocol, event, fn, phase=...)` call must target one of the 17 rows below. Any other `(protocol, event)` pair fails at script load time with `not in RFC §9.3 hook surface`.
 
-### on_receive_from_client
+| Protocol     | Event            | Phases                          | Allowed actions                | Message                  |
+|--------------|------------------|---------------------------------|--------------------------------|--------------------------|
+| `http`       | `on_request`     | `pre_pipeline`, `post_pipeline` | `CONTINUE`, `DROP`, `RESPOND`  | `HTTPMessage` (request)  |
+| `http`       | `on_response`    | `pre_pipeline`, `post_pipeline` | `CONTINUE`, `RESPOND`          | `HTTPMessage` (response) |
+| `ws`         | `on_upgrade`     | `pre_pipeline`, `post_pipeline` | `CONTINUE`, `DROP`, `RESPOND`  | `HTTPMessage` (request)  |
+| `ws`         | `on_message`     | `pre_pipeline`, `post_pipeline` | `CONTINUE`                     | `WSMessage`              |
+| `ws`         | `on_close`       | `none` (lifecycle)              | `CONTINUE`                     | WS close dict            |
+| `grpc`       | `on_start`       | `pre_pipeline`, `post_pipeline` | `CONTINUE`, `DROP`, `RESPOND`  | `GRPCStartMessage`       |
+| `grpc`       | `on_data`        | `pre_pipeline`, `post_pipeline` | `CONTINUE`                     | `GRPCDataMessage`        |
+| `grpc`       | `on_end`         | `none` (lifecycle)              | `CONTINUE`                     | `GRPCEndMessage` dict    |
+| `grpc-web`   | `on_start`       | `pre_pipeline`, `post_pipeline` | `CONTINUE`, `DROP`, `RESPOND`  | `GRPCStartMessage`       |
+| `grpc-web`   | `on_data`        | `pre_pipeline`, `post_pipeline` | `CONTINUE`                     | `GRPCDataMessage`        |
+| `grpc-web`   | `on_end`         | `none` (lifecycle)              | `CONTINUE`                     | `GRPCEndMessage` dict    |
+| `sse`        | `on_event`       | `pre_pipeline`, `post_pipeline` | `CONTINUE`                     | `SSEMessage`             |
+| `raw`        | `on_chunk`       | `pre_pipeline`, `post_pipeline` | `CONTINUE`                     | `RawMessage`             |
+| `tls`        | `on_handshake`   | `none` (lifecycle)              | `CONTINUE`                     | TLS handshake dict       |
+| `connection` | `on_connect`     | `none` (lifecycle)              | `CONTINUE`, `DROP`             | Connection dict          |
+| `connection` | `on_disconnect`  | `none` (lifecycle)              | `CONTINUE`                     | Connection dict          |
+| `socks5`     | `on_connect`     | `none` (lifecycle)              | `CONTINUE`, `DROP`             | SOCKS5 connect dict      |
 
-Called after TargetScope evaluation, before Intercept. The plugin receives the client's request data.
+The `Message` column links the `msg` argument shape — see [Data map reference](data-map-reference.md) for the per-type field list.
 
-- **Allowed actions**: `CONTINUE`, `DROP`, `RESPOND`
-- **Data**: Protocol-specific request data (see [Data map reference](data-map-reference.md))
+### Reading the action column
 
-This is the only hook that supports `DROP` and `RESPOND` actions. Use it to filter, block, or mock responses.
+`CONTINUE` is always permitted. The other actions are only available where listed:
 
-```python
-def on_receive_from_client(data):
-    url = data.get("url", "")
-    if "/blocked" in url:
-        return {"action": action.DROP}
-    return {"action": action.CONTINUE}
-```
+- `DROP` — drop the connection or envelope. Available on transaction-start events (`http.on_request`, `ws.on_upgrade`, `grpc.on_start`, `grpc-web.on_start`) and connection-level events (`connection.on_connect`, `socks5.on_connect`).
+- `RESPOND` — short-circuit with a synthesized response via `action.RESPOND(...)` (HTTP) or `action.RESPOND_GRPC(...)` (gRPC). Available on `http.on_request` and `http.on_response` (replacement of the upstream response — dropping a response would hang the client, so only replacement is allowed), and on the four transaction-start request events.
 
-### on_before_send_to_server
+Mid-stream events (`on_data`, `on_message`, `on_event`, `on_chunk`) accept `CONTINUE` only — terminating a stateful stream uses native termination (gRPC `RST_STREAM`, WS close frame), not an action enum.
 
-Called after Transform, before Recording. The plugin receives the request about to be sent upstream. Modifications made here affect the actual request sent to the server.
+A return of `DROP` or `RESPOND` from an event whose surface forbids it is logged and demoted to `CONTINUE` (fail-soft: a misbehaving plugin must not break wire traffic).
 
-- **Allowed actions**: `CONTINUE` only
-- **Data**: Protocol-specific request data
+## Phases
 
-```python
-def on_before_send_to_server(data):
-    headers = data.get("headers", {})
-    headers["X-Forwarded-By"] = "yorishiro-proxy"
-    data["headers"] = headers
-    return {"action": action.CONTINUE, "data": data}
-```
+Pipeline events accept `pre_pipeline` (default) or `post_pipeline`. See [Writing plugins](writing-plugins.md#registerhookprotocol-event-fn-phasepre_pipeline) for the semantics.
 
-### on_receive_from_server
-
-Called after receiving the server response, before Transform. The plugin receives the raw server response.
-
-- **Allowed actions**: `CONTINUE` only
-- **Data**: Protocol-specific response data
-
-```python
-def on_receive_from_server(data):
-    status = data.get("status_code", 0)
-    if status >= 500:
-        print("Server error: %d" % status)
-    return {"action": action.CONTINUE}
-```
-
-### on_before_send_to_client
-
-Called after Transform, before Recording. The plugin receives the response about to be sent to the client.
-
-- **Allowed actions**: `CONTINUE` only
-- **Data**: Protocol-specific response data
+Lifecycle events have phase `none`. Passing any `phase=` argument to `register_hook` for a lifecycle event is a load-time error:
 
 ```python
-def on_before_send_to_client(data):
-    headers = data.get("headers", {})
-    headers["X-Plugin-Processed"] = "true"
-    data["headers"] = headers
-    return {"action": action.CONTINUE, "data": data}
+# Load-time error: lifecycle event takes no phase=
+register_hook("ws", "on_close", on_close, phase="post_pipeline")
 ```
 
-## Lifecycle hooks
+## Lifecycle events in detail
 
-Lifecycle hooks are called during connection lifecycle events. They do **not** participate in transaction context sharing (no `ctx` key).
+The seven lifecycle events do not run through the Pipeline Step chain. They fire from the producing Layer with a frozen dict shaped for that specific event. Mutations to the dict are ignored — there is no Envelope to commit changes to.
 
-### on_connect
+### `connection.on_connect`
 
-Called when a new TCP connection is accepted.
+Fires when a new TCP connection is accepted, before any Layer is constructed. Returning `DROP` closes the accepting connection without further setup.
 
-- **Allowed actions**: `CONTINUE` only
-- **Data**: Connection metadata
+`msg` keys: `conn_id`, `client_addr`, `listener_name`.
 
-```python
-def on_connect(data):
-    conn_info = data.get("conn_info", {})
-    client = conn_info.get("client_addr", "unknown")
-    print("New connection from: %s" % client)
-    return {"action": action.CONTINUE}
-```
+### `connection.on_disconnect`
 
-### on_tls_handshake
+Fires when a connection closes.
 
-Called after a TLS handshake completes.
+`msg` keys: `conn_id`, `client_addr`, `duration_ms`.
 
-- **Allowed actions**: `CONTINUE` only
-- **Data**: Connection metadata with TLS information
+### `tls.on_handshake`
 
-```python
-def on_tls_handshake(data):
-    conn_info = data.get("conn_info", {})
-    version = conn_info.get("tls_version", "unknown")
-    cipher = conn_info.get("tls_cipher", "unknown")
-    print("TLS handshake: version=%s cipher=%s" % (version, cipher))
-    return {"action": action.CONTINUE}
-```
+Fires after a TLS handshake completes. Fires once for the proxy's MITM-server side and again for the upstream-client side.
 
-### on_disconnect
+`msg` keys: `side` (`"server"` or `"client"`), `sni`, `alpn`, `version_name`, `cipher_name`, `peer_cert_subject`, `client_fingerprint`.
 
-Called when a connection is closed.
+### `socks5.on_connect`
 
-- **Allowed actions**: `CONTINUE` only
-- **Data**: Connection metadata
+Fires after SOCKS5 CONNECT negotiation succeeds. Returning `DROP` aborts the tunnel before any upstream connection is made.
 
-```python
-def on_disconnect(data):
-    conn_info = data.get("conn_info", {})
-    client = conn_info.get("client_addr", "unknown")
-    print("Disconnected: %s" % client)
-    return {"action": action.CONTINUE}
-```
+`msg` keys: `conn_id`, `client_addr`, `target_addr`.
 
-### on_socks5_connect
+### `ws.on_close`
 
-Called after a SOCKS5 CONNECT tunnel is successfully established. See [SOCKS5 data map](data-map-reference.md#socks5) for the full list of data keys.
+Fires when the WebSocket channel closes. The `msg` mirrors the close-frame `WSMessage` shape so the same handler can read `msg["close_code"]` regardless of normal vs abnormal closure.
 
-- **Allowed actions**: `CONTINUE` only
-- **Data**: SOCKS5 tunnel metadata
+`msg` keys: `opcode`, `fin`, `masked`, `payload`, `close_code`, `close_reason`, `compressed`.
 
-```python
-def on_socks5_connect(data):
-    target = data.get("target", "unknown")
-    auth = data.get("auth_method", "none")
-    print("SOCKS5 tunnel to %s (auth: %s)" % (target, auth))
-    return {"action": action.CONTINUE}
-```
+### `grpc.on_end` and `grpc-web.on_end`
 
-## Hook call order in the proxy pipeline
+Fires when the gRPC RPC terminates. `msg` may be a wire-observed end or a synthesized end (e.g. `Status=2 UNKNOWN` for an abnormal termination).
 
-The data hooks are called in a specific order within the proxy pipeline:
-
-```
-Client request arrives
-  -> TargetScope evaluation
-  -> on_receive_from_client    (can DROP / RESPOND)
-  -> Intercept
-  -> Transform
-  -> on_before_send_to_server  (CONTINUE only)
-  -> Recording
-  -> Forward to server
-
-Server response arrives
-  -> on_receive_from_server    (CONTINUE only)
-  -> Transform
-  -> on_before_send_to_client  (CONTINUE only)
-  -> Recording
-  -> Forward to client
-```
-
-## Actions summary
-
-| Action | Allowed hooks | Behavior |
-|--------|--------------|----------|
-| `action.CONTINUE` | All hooks | Continue processing with (optionally modified) data |
-| `action.DROP` | `on_receive_from_client` only | Silently drop the connection |
-| `action.RESPOND` | `on_receive_from_client` only (HTTP/HTTPS) | Send a custom response to the client |
+`msg` keys: `status`, `message`, `status_details`, `trailers` (sequence of `(name, value)` 2-tuples).
 
 ## Plugin chain behavior
 
-When multiple plugins are registered for the same hook:
+When multiple plugins register hooks for the same `(protocol, event, phase)`, the dispatcher fires them in registration order:
 
-1. Plugins are called in registration order
-2. Each plugin's modifications are visible to subsequent plugins
-3. If a plugin returns `DROP` or `RESPOND`, the chain stops immediately
-4. If a plugin errors with `on_error: "skip"`, it is skipped and the chain continues
-5. If a plugin errors with `on_error: "abort"`, the chain stops and the error is returned
+1. Each hook's mutations to `msg` are visible to subsequent hooks.
+2. The first hook that returns `DROP` or `RESPOND` short-circuits the chain.
+3. A hook that errors is handled per `on_error`: `"skip"` logs and continues; `"abort"` stops the chain.
+4. Lifecycle `connection.on_connect` and `socks5.on_connect` short-circuit on the first `DROP`; the others always run every hook.
 
 ## Related pages
 
-- [Data map reference](data-map-reference.md) -- Protocol-specific data keys for each hook
-- [Writing plugins](writing-plugins.md) -- How to write plugins
-- [Examples](examples.md) -- Ready-to-use plugin samples
+- [Writing plugins](writing-plugins.md) — `register_hook` signature, phase semantics, mutation API.
+- [Data map reference](data-map-reference.md) — Per-protocol `msg` dict shape.
+- [Examples](examples.md) — Ready-to-use plugin samples.

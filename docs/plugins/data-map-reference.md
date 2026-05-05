@@ -1,147 +1,149 @@
-# Protocol data map reference
+# Data map reference
 
-This page documents the data dictionary keys passed to plugin hook functions for each protocol. Each hook receives a `data` dictionary with protocol-specific keys that you can read or modify.
+This page documents the `msg` argument shape passed to each hook function. The shape depends on the protocol and event — for example, `http.on_request` receives an `HTTPMessage` view, `ws.on_message` receives a `WSMessage` view.
 
-## HTTP / HTTPS
+## Naming convention
 
-Hooks receive the following data keys for HTTP/1.x and HTTPS (MITM) traffic.
+Field names are mechanically converted from the underlying Go struct's PascalCase identifier to `snake_case`:
 
-### Request hooks (`on_receive_from_client`, `on_before_send_to_server`)
+| Go field        | Dict key         |
+|-----------------|------------------|
+| `Method`        | `method`         |
+| `RawQuery`      | `raw_query`      |
+| `StatusReason`  | `status_reason`  |
+| `EndStream`     | `end_stream`     |
+| `ContentType`   | `content_type`   |
+| `AcceptEncoding`| `accept_encoding`|
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `protocol` | string | `"HTTP/1.x"` or `"HTTPS"` |
-| `method` | string | HTTP method (GET, POST, etc.) |
-| `url` | string | Full request URL |
-| `scheme` | string | URL scheme (`"http"` or `"https"`) |
-| `host` | string | Request host |
-| `path` | string | URL path |
-| `query` | string | Raw query string |
-| `headers` | dict | HTTP headers as key to list-of-values mapping |
-| `body` | bytes | Request body |
-| `conn_info` | dict | Connection metadata (see [conn_info](#connection-info-conn_info)) |
-| `ctx` | dict | Transaction context for cross-hook data sharing |
+Acronym runs collapse to a single lowercase block (`URL` → `url`, `JA3` → `ja3`); a run followed by a lowercase letter breaks correctly (`HTTPCode` → `http_code`).
 
-### Response hooks (`on_receive_from_server`, `on_before_send_to_client`)
+## Shared shape conventions
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `protocol` | string | `"HTTP/1.x"` or `"HTTPS"` |
-| `status_code` | int | HTTP response status code |
-| `headers` | dict | HTTP headers as key to list-of-values mapping |
-| `body` | bytes | Response body |
-| `conn_info` | dict | Connection metadata |
-| `request` | dict | Read-only request summary with `method`, `url`, `host` |
-| `ctx` | dict | Transaction context |
+### `headers` / `trailers` / `metadata`
 
-### Header format
+Header-typed fields are exposed as a `headers` value: an order-preserved, case-preserved sequence of `(name, value)` 2-tuples. Iteration and indexing yield 2-tuples; mutation goes through `.append(name, value)`, `.replace_at(i, name, value)`, `.delete_first(name)`, and the read-only `.get_first(name)`. See [Writing plugins → Headers and trailers](writing-plugins.md#headers-and-trailers).
 
-HTTP headers are represented as a dictionary where each key maps to a list of string values:
+To bulk-replace, assign a new sequence of 2-tuples:
 
 ```python
-# Reading headers
-auth = data.get("headers", {}).get("Authorization", [])
-if auth:
-    print("Auth header: %s" % auth[0])
-
-# Setting headers (single value)
-headers = data.get("headers", {})
-headers["X-Custom"] = "value"
-data["headers"] = headers
+msg["headers"] = [("Host", "example.com"), ("X-Auth", "abc")]
 ```
 
-## HTTP/2
+### `raw`
 
-HTTP/2 data maps are identical to HTTP/HTTPS, with the `protocol` value set to `"h2"`:
+Every `msg` exposes a writable `"raw"` key bound to the wire-observed bytes of the envelope. Reads return `bytes`. Assigning `bytes` injects the new value verbatim onto the wire — see [Writing plugins → `msg["raw"]`](writing-plugins.md#msgraw-byte-injection). Per RFC §9.3 D4, when both `raw` and structured fields are mutated, raw wins.
 
-| Key | Value |
-|-----|-------|
-| `protocol` | `"h2"` |
+### `anomalies`
 
-All other fields are the same as [HTTP / HTTPS](#http-https).
+Read-only field on `HTTPMessage`, `GRPCStartMessage`, `GRPCEndMessage`, and `SSEMessage`. A list of frozen 2-key dicts (`{"type": str, "detail": str}`) describing parser-detected wire anomalies (CL/TE conflict, malformed framing, etc.). Assigning to it raises a load-time error; iterate it for read-only inspection.
 
-## gRPC
+### Body fields
 
-gRPC plugins operate in **observe-only** mode. Only `action.CONTINUE` is allowed.
+`body` (HTTP) and `payload` (WS, gRPC data, raw bytes) are `bytes`. HTTP bodies larger than 1 MiB cause the plugin to be skipped for that envelope (the body is never presented in truncated form). To mutate larger payloads, write `msg["raw"]` directly.
 
-### Request hooks
+## HTTPMessage (`http.on_request`, `http.on_response`, `ws.on_upgrade`)
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `protocol` | string | `"grpc"` |
-| `method` | string | gRPC method path (e.g., `/package.Service/Method`) |
-| `url` | string | Same as `method` for gRPC |
-| `headers` | dict | gRPC metadata/headers |
-| `body` | string | Serialized protobuf message |
-| `conn_info` | dict | Connection metadata |
-| `ctx` | dict | Transaction context |
+| Key             | Type    | Direction  | Description                                                       |
+|-----------------|---------|------------|-------------------------------------------------------------------|
+| `method`        | string  | request    | HTTP method (`GET`, `POST`, ...).                                 |
+| `scheme`        | string  | request    | `"http"` or `"https"`.                                            |
+| `authority`     | string  | request    | `Host` header or `:authority` pseudo-header.                       |
+| `path`          | string  | request    | URL path.                                                         |
+| `raw_query`     | string  | request    | Raw query string without leading `?`.                              |
+| `status`        | int     | response   | HTTP status code.                                                 |
+| `status_reason` | string  | response   | HTTP/1.x reason phrase (empty for HTTP/2).                        |
+| `headers`       | headers | both       | Order- and case-preserved header list.                            |
+| `trailers`      | headers | both       | Order- and case-preserved trailer list.                           |
+| `body`          | bytes   | both       | Body bytes (1 MiB cap; oversize skips the plugin).                |
+| `anomalies`     | list    | both, RO   | Parser-detected anomalies.                                        |
+| `raw`           | bytes   | both       | Wire-observed bytes; writable.                                    |
 
-### Response hooks
+Request fields (`method`, `scheme`, `authority`, `path`, `raw_query`) are valid when the envelope is a request; response fields (`status`, `status_reason`) are valid when it is a response. Reading a request field on a response envelope yields a zero value (empty string / `0`).
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `protocol` | string | `"grpc"` |
-| `headers` | dict | gRPC response metadata/trailers |
-| `body` | string | Serialized protobuf message |
-| `conn_info` | dict | Connection metadata |
-| `request` | dict | Read-only request summary |
-| `ctx` | dict | Transaction context |
+## WSMessage (`ws.on_message`, `ws.on_close`)
 
-## WebSocket
+| Key            | Type   | Description                                                       |
+|----------------|--------|-------------------------------------------------------------------|
+| `opcode`       | int    | RFC 6455 opcode: `0x0`=continuation, `0x1`=text, `0x2`=binary, `0x8`=close, `0x9`=ping, `0xA`=pong. |
+| `fin`          | bool   | Final-fragment bit.                                               |
+| `masked`       | bool   | True for client-to-server frames.                                 |
+| `mask`         | bytes  | 4-byte masking key when `masked` is true.                          |
+| `payload`      | bytes  | Unmasked payload.                                                 |
+| `close_code`   | int    | RFC 6455 close status (uint16). Zero for non-Close frames.        |
+| `close_reason` | string | Optional UTF-8 close reason.                                      |
+| `compressed`   | bool   | RSV1 bit (per-message-deflate, RFC 7692).                         |
+| `raw`          | bytes  | Wire-observed bytes; writable.                                    |
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `protocol` | string | `"websocket"` |
-| `opcode` | int | WebSocket frame opcode (1=text, 2=binary) |
-| `payload` | string | Message payload |
-| `is_text` | bool | `True` if the message is a text frame |
-| `direction` | string | `"client_to_server"` or `"server_to_client"` |
-| `conn_info` | dict | Connection metadata |
+For `ws.on_close` the dict is frozen — mutations are ignored. Otherwise the same shape applies.
 
-## TCP (raw)
+## GRPCStartMessage (`grpc.on_start`, `grpc-web.on_start`)
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `protocol` | string | `"tcp"` |
-| `data` | string | Raw TCP data |
-| `direction` | string | `"client_to_server"` or `"server_to_client"` |
-| `conn_info` | dict | Connection metadata |
-| `forward_target` | string | Target address for TCP forwarding |
+| Key               | Type    | Description                                                    |
+|-------------------|---------|----------------------------------------------------------------|
+| `service`         | string  | gRPC service name (derived from `:path`).                      |
+| `method`          | string  | gRPC method name.                                              |
+| `metadata`        | headers | gRPC metadata list. Pseudo-headers are not included here.      |
+| `timeout`         | int     | Parsed `grpc-timeout` in nanoseconds. Zero when unset.         |
+| `content_type`    | string  | `application/grpc[+proto|+json|...]`.                          |
+| `encoding`        | string  | Parsed `grpc-encoding` (`identity`, `gzip`, ...).              |
+| `accept_encoding` | list[str] | Parsed `grpc-accept-encoding` list. Reassign as a list to mutate. |
+| `anomalies`       | list    | Read-only parser anomalies.                                    |
+| `raw`             | bytes   | Wire-observed bytes; writable.                                 |
 
-## SOCKS5
+## GRPCDataMessage (`grpc.on_data`, `grpc-web.on_data`)
 
-The `on_socks5_connect` hook is called when a SOCKS5 CONNECT tunnel is successfully established. It receives the following data:
+| Key           | Type   | Description                                                              |
+|---------------|--------|--------------------------------------------------------------------------|
+| `service`     | string | Read-only; denormalized from the start message.                          |
+| `method`      | string | Read-only; denormalized from the start message.                          |
+| `compressed`  | bool   | First byte of the 5-byte length-prefixed-message (LPM) prefix.            |
+| `wire_length` | int    | uint32 length field of the LPM prefix (compressed-payload length).        |
+| `payload`     | bytes  | Decompressed payload bytes regardless of `compressed`.                    |
+| `end_stream`  | bool   | Mirrors the wire-level `END_STREAM` flag of the underlying H2 DATA frame. |
+| `raw`         | bytes  | Wire-observed bytes (5-byte LPM prefix + payload as on the wire); writable. |
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `event` | string | Always `"socks5_connect"` |
-| `target_host` | string | Destination hostname (e.g., `"example.com"`) |
-| `target_port` | int | Destination port (e.g., `443`) |
-| `target` | string | Full destination address (e.g., `"example.com:443"`) |
-| `auth_method` | string | Authentication method used: `"none"` or `"username_password"` |
-| `auth_user` | string | Authenticated username (empty if `auth_method` is `"none"`) |
-| `client_addr` | string | Remote address of the client |
+To inject malformed compressed bytes or alternate framing, write `msg["raw"]` directly — `payload` is always presented decompressed.
 
-Only `action.CONTINUE` is allowed; `DROP` and `RESPOND` are not supported.
+## GRPCEndMessage (`grpc.on_end`, `grpc-web.on_end`)
 
-Flows that pass through a SOCKS5 tunnel are recorded with protocol identifiers like `SOCKS5+HTTPS` or `SOCKS5+HTTP`, and include `socks5_target` and `socks5_auth_method` in their tags.
+| Key              | Type    | Description                                                  |
+|------------------|---------|--------------------------------------------------------------|
+| `status`         | int     | uint32 grpc-status code (`0`=OK, `1`=CANCELLED, ...).        |
+| `message`        | string  | Percent-decoded `grpc-message` value.                        |
+| `status_details` | bytes   | Raw protobuf bytes of `grpc-status-details-bin`, if present. |
+| `trailers`       | headers | Remaining trailer metadata after status/message/details are stripped. |
+| `anomalies`      | list    | Read-only parser anomalies.                                  |
 
-## Connection info (`conn_info`)
+For lifecycle dispatch (`on_end` is `none`-phase) the dict is frozen.
 
-The `conn_info` dictionary is available in all protocols and contains network connection metadata:
+## SSEMessage (`sse.on_event`)
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `client_addr` | string | Remote address of the client (e.g., `"192.168.1.100:54321"`) |
-| `server_addr` | string | Resolved address of the upstream server |
-| `tls_version` | string | Negotiated TLS version (e.g., `"TLS 1.3"`) |
-| `tls_cipher` | string | Negotiated TLS cipher suite name |
-| `tls_alpn` | string | Negotiated ALPN protocol (e.g., `"h2"`, `"http/1.1"`) |
+| Key         | Type   | Description                                                     |
+|-------------|--------|-----------------------------------------------------------------|
+| `event`     | string | Parsed event name (`event:` field).                             |
+| `data`      | string | Joined `data:` lines, separated by newline.                     |
+| `id`        | string | `id:` field (last-event-id).                                    |
+| `retry`     | int    | `retry:` field as nanoseconds. Zero when unset.                 |
+| `anomalies` | list   | Read-only parser anomalies.                                     |
+| `raw`       | bytes  | Wire-observed bytes; writable.                                  |
 
-For non-TLS connections, the TLS-related fields are empty strings.
+## RawMessage (`raw.on_chunk`)
+
+| Key     | Type  | Description                                                     |
+|---------|-------|-----------------------------------------------------------------|
+| `bytes` | bytes | The bytes received in one Read call (or sent in one Write call). |
+| `raw`   | bytes | Same as `bytes` for `raw.on_chunk`; writable. (Mutating `bytes` and `raw` follow the same "raw wins" rule.) |
+
+## Lifecycle dicts
+
+Lifecycle events (phase `none`) deliver a frozen dict instead of a `MessageDict`. There is no `raw` key and mutations are ignored — see [Hook reference → Lifecycle events in detail](hook-reference.md#lifecycle-events-in-detail) for the per-event keys.
+
+## Envelope-level identifiers
+
+Envelope-level fields — `StreamID`, `FlowID`, `Sequence`, `Direction`, `Protocol` — are not exposed as `msg` keys. Group events that belong to the same wire stream by stashing values into `ctx.stream_state` (per `(ConnID, StreamID)`) or `ctx.transaction_state`. See [Writing plugins → The `ctx` argument](writing-plugins.md#the-ctx-argument).
 
 ## Related pages
 
-- [Hook reference](hook-reference.md) -- When each hook is called and which actions are allowed
-- [Writing plugins](writing-plugins.md) -- How to write plugins
-- [Examples](examples.md) -- Ready-to-use plugin samples
+- [Hook reference](hook-reference.md) — Which event delivers which message shape.
+- [Writing plugins](writing-plugins.md) — Mutation API and sandbox modules.
+- [Examples](examples.md) — Ready-to-use plugin samples.
