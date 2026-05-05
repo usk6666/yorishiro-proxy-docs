@@ -1,17 +1,23 @@
 # gRPC
 
-yorishiro-proxy records gRPC traffic flowing over HTTP/2, extracting service and method names, parsing gRPC frames, and classifying streaming patterns. gRPC support is integrated into the HTTP/2 handler -- it is not a standalone protocol handler.
+yorishiro-proxy records gRPC traffic flowing over HTTP/2 with a dedicated gRPC Layer (`internal/layer/grpc/`). The Layer wraps the event-granular HTTP/2 stream Channel produced by `internal/layer/http2/` and emits one Envelope per gRPC event:
+
+- `GRPCStartMessage` — translated from the initial HEADERS frame on either direction
+- `GRPCDataMessage` — produced by length-prefixed-message (LPM) reassembly across one or more `H2DataEvent` payloads
+- `GRPCEndMessage` — translated from the trailer HEADERS frame, or synthesized from the same `END_STREAM` HEADERS frame in the trailers-only response case
+
+L7 structured view: yes. L4 raw bytes: yes (via HTTP/2). Native LPM reassembly produces `GRPCStart`/`Data`/`End` envelope events.
 
 ## How gRPC is detected
 
-gRPC uses HTTP/2 as its transport. The proxy identifies gRPC traffic by checking the `Content-Type` header on each HTTP/2 stream:
+gRPC uses HTTP/2 as its transport. Detection lives in the connector's `dispatchH2Stream` helper (`internal/connector/h2_dispatch.go`), which peeks the first `H2HeadersEvent` and inspects the `Content-Type` header on each HTTP/2 stream:
 
 - `application/grpc`
 - `application/grpc+proto`
 - `application/grpc+json`
 - Any value matching `application/grpc+*`
 
-When a matching content type is found, the HTTP/2 handler delegates flow recording to the gRPC handler while continuing to proxy the stream normally.
+When a matching content type is found, the connector wraps the stream Channel with the gRPC Layer instead of the [HTTPAggregator](http2.md). The gRPC Layer itself contains no detection logic — it is a strict upper-layer boundary.
 
 ## Service and method extraction
 
@@ -21,16 +27,16 @@ gRPC encodes the service and method in the URL path following the pattern:
 /package.ServiceName/MethodName
 ```
 
-The proxy parses this path and stores the extracted service and method names as metadata on each flow message. For example, a request to `/helloworld.Greeter/SayHello` produces:
+The Layer parses this path and stores the extracted service and method names on `GRPCStartMessage.Service` / `.Method`. For example, a request to `/helloworld.Greeter/SayHello` produces:
 
-- `service`: `helloworld.Greeter`
-- `method`: `SayHello`
+- `Service`: `helloworld.Greeter`
+- `Method`: `SayHello`
 
-If the path cannot be parsed (e.g., malformed URLs), the service and method are recorded as `unknown`.
+Path parsing is tolerant: malformed `:path` values (missing, empty, no leading slash, no separator, single segment) yield `Service=""` and `Method=""` together with a warning log. The malformed path remains observable on `Envelope.Raw` for diagnostic purposes — the wire bytes are never altered.
 
-## Protobuf framing
+## Protobuf framing and LPM reassembly
 
-gRPC messages use a Length-Prefixed Message format with a 5-byte header:
+gRPC messages use a Length-Prefixed Message (LPM) format with a 5-byte header:
 
 ```
 +------------------+------------------+-------------------+
@@ -42,46 +48,25 @@ gRPC messages use a Length-Prefixed Message format with a 5-byte header:
 - **Length** (4 bytes): big-endian uint32 indicating the payload size
 - **Payload** (N bytes): the serialized Protocol Buffers (or JSON) message
 
-The proxy parses all frames from both the request and response bodies. Each frame's payload is stored as a separate flow message, preserving the compressed flag in metadata.
+The 5-byte LPM prefix is parsed across `H2DataEvent` boundaries. A single LPM may span many DATA events; one DATA event may carry many LPMs. Each reassembled LPM produces one `GRPCDataMessage` envelope.
+
+`Envelope.Raw` for a `GRPCDataMessage` envelope contains the exact wire bytes (5-byte LPM prefix + compressed payload). `GRPCDataMessage.Payload` is always the decompressed bytes for inspection convenience.
+
+### Reassembly limits
+
+The per-channel reassembly buffer is bounded by `config.MaxGRPCMessageSize` (254 MiB). The cap applies to both the wire LPM length (the 4-byte length prefix) and the decompressed length after gunzip — the latter is enforced via `io.LimitReader` inside gunzip to mitigate decompression-bomb attacks. Exceeding the cap yields `*layer.StreamError{Code: ErrorInternalError}` and marks the wrapper terminated.
 
 ## Progressive recording
 
-Unlike HTTP/1.x flows that are recorded only after the full request/response cycle, gRPC flows use progressive (frame-by-frame) recording. This means you can see active gRPC streams in the flow list before they complete.
+Unlike HTTP/1.x flows that are recorded only after the full request/response cycle, gRPC flows use progressive (envelope-by-envelope) recording. The Layer emits one envelope per gRPC event (`GRPCStartMessage` for HEADERS, `GRPCDataMessage` for each LPM, `GRPCEndMessage` for trailers), so active streams are visible in the flow list before they complete.
 
-The lifecycle works as follows:
+### Sequence numbering
 
-1. **Flow creation** -- when the first gRPC request arrives, a flow is created with `State="active"` and `FlowType="unary"` (the initial default)
-2. **Initial send message** -- the request headers (method, URL, service, method) are recorded as the first send message (sequence 0)
-3. **Frame-by-frame recording** -- as each gRPC frame arrives (from either client or server), it is immediately appended as a new flow message via `AppendMessage`
-4. **Stream completion** -- when the stream terminates, the flow is updated to `State="complete"` with the final flow type and trailer metadata
+A per-channel monotonic counter starts at 0 and increments on every emitted envelope regardless of direction. This is correct for bidirectional streams — sequences interleave Send-direction and Receive-direction events in observation order.
 
-Each recorded frame message includes:
+### Streaming transport
 
-| Metadata key | Description |
-|-------------|-------------|
-| `direction` | `"client_to_server"` or `"server_to_client"` |
-| `sequence` | Message sequence number within the flow |
-| `compressed` | `"true"` if the frame's compressed flag is set |
-| `encoding` | `"protobuf"` |
-| `grpc_encoding` | Compression algorithm (e.g., `"gzip"`) if present |
-
-A per-stream message count limit prevents excessive memory use for very long-running streams. When the limit is reached, frames continue to be forwarded but are no longer recorded.
-
-## Streaming transport
-
-The proxy handles all four gRPC streaming patterns using bidirectional io.Pipe-based streaming. Instead of buffering the entire request body before forwarding (which would deadlock bidirectional streams), data is streamed as it arrives:
-
-```
-Client --> Read+Parse --> Pipe Writer --> Upstream
-                |
-                v
-         FrameBuffer (progressive recording)
-
-Upstream --> Read+Parse+Flush --> Client
-     |
-     v
-FrameBuffer (progressive recording)
-```
+The Layer handles all four gRPC streaming patterns natively. Each `H2DataEvent` is parsed into LPM frames and emitted as `GRPCDataMessage` envelopes as soon as a complete LPM is reassembled, without waiting for the stream to end.
 
 ### Streaming classification
 
@@ -104,74 +89,36 @@ The flow type starts as `"unary"` when the flow is created and is updated to the
 
 ## Trailer handling
 
-gRPC relies on HTTP/2 trailers to carry status information. The proxy records trailers in a dedicated final receive message with `grpc_type: "trailers"`.
+gRPC relies on HTTP/2 trailers to carry status information. The Layer translates the trailer HEADERS frame into a `GRPCEndMessage` envelope.
 
 ### Standard trailers
 
-In a normal gRPC response, trailers arrive as a HEADERS frame with `END_STREAM` after all DATA frames. The proxy extracts:
+In a normal gRPC response, trailers arrive as a HEADERS frame with `END_STREAM` after all DATA frames. The Layer extracts:
 
-- `grpc-status` -- the gRPC status code (e.g., `0` for OK)
-- `grpc-message` -- the error message (if any)
-
-These values are recorded in the final receive message metadata and in the flow's tags as `grpc_status`.
+- `grpc-status` → `GRPCEndMessage.Status`
+- `grpc-message` → `GRPCEndMessage.Message`
+- `grpc-status-details-bin` → `GRPCEndMessage.StatusDetails` (raw protobuf bytes)
+- All remaining trailer key/values → `GRPCEndMessage.Trailers` (order and casing preserved)
 
 ### Trailers-only responses
 
-A trailers-only response occurs when the server sends `grpc-status` in the initial response headers (no DATA frames). This happens for immediate errors like `UNIMPLEMENTED` or `PERMISSION_DENIED`.
+A trailers-only response occurs when the server sends `grpc-status` in the initial response HEADERS frame with `END_STREAM=true` (no DATA frames). This happens for immediate errors like `UNIMPLEMENTED` or `PERMISSION_DENIED`.
 
-The proxy detects trailers-only responses by checking whether `Grpc-Status` is present in the response headers (rather than in trailers). When detected, the final receive message includes:
-
-```
-"grpc_trailers_only": "true"
-```
-
-This `grpc_trailers_only` metadata field lets you distinguish trailers-only responses from normal responses where no data frames happened to be sent.
+When the Layer sees a Receive-side `H2HeadersEvent` with `EndStream=true` carrying `grpc-status`, it emits **both** a `GRPCStartMessage` envelope (sequence N) **and** a synthetic `GRPCEndMessage` envelope (sequence N+1) parsed from the same headers. The synthetic End envelope has `Envelope.Raw=nil` so analysts can distinguish it from a wire-observed End.
 
 ## Flow recording structure
 
 A gRPC flow is recorded with:
 
-- **Protocol**: `gRPC`
+- **Protocol**: `grpc`
 - **Flow type**: `unary`, `stream`, or `bidirectional`
 - **State**: `active` during streaming, `complete` when finished
 
-### Messages
+### Metadata strip set
 
-Request frames are recorded as `send` messages, response frames as `receive` messages. Each message includes metadata:
+`GRPCStartMessage.Metadata` excludes pseudo-headers (any name beginning with `:`), `content-type`, `grpc-encoding`, `grpc-accept-encoding`, and `grpc-timeout` — those values surface on dedicated `GRPCStartMessage` fields (`ContentType`, `Encoding`, `AcceptEncoding`, `Timeout`). Order and casing of remaining metadata are preserved.
 
-**Send message metadata:**
-
-| Key | Description |
-|-----|-------------|
-| `service` | gRPC service name (e.g., `helloworld.Greeter`) |
-| `method` | gRPC method name (e.g., `SayHello`) |
-| `grpc_encoding` | Compression encoding (e.g., `gzip`) if present |
-| `compressed` | `"true"` if the frame's compressed flag is set |
-
-**Receive message metadata:**
-
-| Key | Description |
-|-----|-------------|
-| `service` | gRPC service name |
-| `method` | gRPC method name |
-| `grpc_status` | gRPC status code (e.g., `0` for OK) |
-| `grpc_message` | gRPC error message if present |
-| `grpc_encoding` | Compression encoding if present |
-| `compressed` | `"true"` if the frame's compressed flag is set |
-
-The first send message carries the HTTP method, URL, and request headers. The first receive message carries the HTTP status code and response headers. The last receive message (with `grpc_type: "trailers"`) includes trailers and the final `grpc-status`.
-
-### Flow tags
-
-Completed gRPC flows include the following tags:
-
-| Tag | Description |
-|-----|-------------|
-| `streaming_type` | `"grpc"` |
-| `grpc_service` | Service name |
-| `grpc_method` | Method name |
-| `grpc_status` | gRPC status code |
-| `grpc_messages_recorded` | Total number of messages recorded |
+`GRPCEndMessage.Trailers` excludes `grpc-status`, `grpc-message`, and `grpc-status-details-bin`; those populate `Status`, `Message`, `StatusDetails` respectively.
 
 ### gRPC status codes
 
@@ -197,26 +144,21 @@ The proxy extracts the gRPC status from trailers (or response headers for traile
 | 15 | DATA_LOSS |
 | 16 | UNAUTHENTICATED |
 
-## Plugin hooks (observe-only)
+## Plugin hooks
 
-The gRPC handler dispatches plugin hooks for each frame, but plugins **cannot modify or drop** gRPC traffic. All hooks are observe-only:
+The gRPC Layer participates in the standard Pipeline. Plugin authors register hooks via the pluginv2 engine using the `(protocol, event, phase)` triple — for example `(grpc, on_data, pre)` to observe each `GRPCDataMessage` envelope before intercept. See the [Plugin hook reference](../plugins/hook-reference.md) for the full surface.
 
-| Hook | Trigger | Notes |
-|------|---------|-------|
-| `on_receive_from_client` | For each request frame | Data includes service, method, body, compression flag |
-| `on_receive_from_server` | For each response frame | Data includes grpc_status, grpc_message, trailers |
-
-If a plugin returns a non-`CONTINUE` action (e.g., `DROP`), it is logged but ignored. This differs from HTTP/1.x and WebSocket where plugins can drop or modify traffic.
-
-A per-session transaction context (`ctx`) is shared across all hook dispatches within the same gRPC session, allowing plugins to correlate request and response frames.
+A per-session transaction context (`ctx.transaction_state`) is shared across all hook dispatches within the same gRPC session, allowing plugins to correlate Start / Data / End envelopes.
 
 ## Querying gRPC flows
+
+The canonical Envelope.Protocol value for gRPC is `grpc`:
 
 ```json
 // query
 {
   "resource": "flows",
-  "filter": {"protocol": "gRPC"}
+  "filter": {"protocol": "grpc"}
 }
 ```
 
@@ -226,21 +168,26 @@ You can also filter by flow type to find streaming RPCs:
 // query
 {
   "resource": "flows",
-  "filter": {"protocol": "gRPC", "flow_type": "bidirectional"}
+  "filter": {"protocol": "grpc", "flow_type": "bidirectional"}
 }
 ```
 
+## Compression
+
+The Layer's compression policy is strict. v1 supports only `identity` (no-op) and `gzip` (compress/gzip). Any other `grpc-encoding` value on a `Compressed=true` LPM returns `*layer.StreamError{Code: ErrorProtocol}` from `Next` or `Send`.
+
 ## Limitations
 
-- **Observe-only** -- plugins cannot modify or drop gRPC frames (they can only observe)
 - **No protobuf decoding** -- payloads are stored as raw bytes; the proxy does not decode Protocol Buffers messages
-- **No decompression** -- compressed frames are stored in their compressed form; the `compressed` metadata flag indicates when decompression is needed
-- **HTTP/2 only** -- gRPC-Web over HTTP/1.1 is not supported
-- **Frame size limit** -- individual gRPC messages exceeding the configured maximum size are rejected
-- **Message recording limit** -- very long-running streams stop recording after a per-stream message limit; forwarding continues unaffected
+- **HTTP/2 only** -- this Layer handles gRPC over HTTP/2. For browser-style gRPC over HTTP/1.x or HTTP/2 see [gRPC-Web](grpc-web.md)
+- **Compression algorithms** -- only `identity` and `gzip` are supported; other `grpc-encoding` values surface as a stream error
+- **Reassembly cap** -- LPMs exceeding `MaxGRPCMessageSize` (254 MiB) on the wire or after gunzip are rejected with a `*layer.StreamError`
 
 ## Related pages
 
 - [HTTP/2](http2.md) -- the transport layer for gRPC
+- [gRPC-Web](grpc-web.md) -- browser-style gRPC sharing the same `GRPCStart`/`Data`/`End` Message types
 - [HTTPS MITM](https-mitm.md) -- TLS interception for gRPC over TLS
+- [resend](../tools/resend.md) -- replay a gRPC envelope (`resend_grpc` typed variant)
+- [fuzz](../tools/fuzz.md) -- mutate and replay gRPC envelopes (`fuzz_grpc` typed variant)
 - [Plugin hook reference](../plugins/hook-reference.md) -- full hook documentation

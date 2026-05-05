@@ -1,21 +1,29 @@
 # HTTPS MITM
 
-yorishiro-proxy intercepts HTTPS traffic through man-in-the-middle (MITM) TLS termination. When a client sends an HTTP `CONNECT` request, the proxy establishes a TLS tunnel, dynamically issues a certificate for the target hostname, and decrypts the traffic for inspection and recording.
+yorishiro-proxy intercepts HTTPS traffic through man-in-the-middle (MITM) TLS termination. When a client sends an HTTP `CONNECT` request, the connector establishes a TLS tunnel, dynamically issues a certificate for the target hostname, and decrypts the traffic for inspection and recording.
+
+The flow is owned by three components:
+
+- The **connector** (`internal/connector/`) accepts the TCP connection.
+- `connect_handler.go` recognizes the `CONNECT` request and completes the tunnel.
+- The **TLS Layer** (`internal/layer/tlslayer/`) terminates TLS on both the client and upstream sides.
+- ALPN routing (`internal/connector/alpn_routing.go`) chooses the inner Layer (`http1`, `http2`, or `bytechunk` for unknown ALPN).
 
 ## CONNECT tunnel flow
 
 The HTTPS interception follows the standard HTTP CONNECT proxy protocol:
 
 ```
-1. Client ──CONNECT example.com:443──> Proxy
-2. Proxy validates target scope and rate limits
-3. Proxy ──200 Connection Established──> Client
-4. Client ──TLS ClientHello──> Proxy (TLS handshake with dynamic cert)
-5. Proxy <──decrypted HTTP──> Client (MITM tunnel established)
-6. Proxy ──TLS──> example.com:443 (separate upstream TLS connection)
+1. Client ──CONNECT example.com:443──> connector
+2. connector validates target scope and rate limits
+3. connector ──200 Connection Established──> Client
+4. Client ──TLS ClientHello──> tlslayer.Server (MITM cert presentation)
+5. connector dials upstream and runs tlslayer.Client toward example.com:443
+6. ALPN negotiation chooses the inner Layer (http1 / http2 / bytechunk)
+7. Inner traffic flows through the chosen Layer + standard Pipeline
 ```
 
-After the tunnel is established, the proxy reads decrypted HTTP requests from the client-side TLS connection, forwards them to the upstream server over a separate TLS connection, and records the full request/response flow.
+`tlslayer.Server` and `tlslayer.Client` each return a `*envelope.TLSSnapshot` capturing the negotiated TLS parameters (SNI, ALPN, peer certificate, cipher suite, version). Both snapshots are attached to envelopes produced by the inner Layer.
 
 ## Dynamic certificate issuance
 
@@ -58,12 +66,13 @@ For detailed CA installation instructions, see [CA certificate](../getting-start
 
 ## ALPN negotiation
 
-When the HTTP/2 handler is available, the proxy advertises both `h2` and `http/1.1` in the ALPN extension during the TLS handshake with the client:
+The proxy advertises both `h2` and `http/1.1` to the upstream during the TLS handshake (or only the cached ALPN, if the upstream's preference has been observed before). The client-facing handshake uses the same ALPN to ensure end-to-end consistency. ALPN routing then picks the inner Layer:
 
-- If the client negotiates **h2**, the connection is handed off to the [HTTP/2 handler](http2.md) via the `HandleH2` interface
-- If the client negotiates **http/1.1** (or no ALPN), the connection stays with the HTTP/1.x handler
+- `http/1.1` (or empty ALPN) — the inner Layer is `internal/layer/http1/`
+- `h2` — the inner Layer is `internal/layer/http2/` (see [HTTP/2](http2.md))
+- Anything else — the inner Layer falls back to `internal/layer/bytechunk/` for raw passthrough with TLS visibility
 
-This means a single CONNECT tunnel can serve either HTTP/1.1 or HTTP/2 traffic depending on client preference.
+A single CONNECT tunnel can therefore serve HTTP/1.1, HTTP/2, or any opaque protocol depending on the negotiated ALPN.
 
 ## TLS passthrough
 
@@ -94,23 +103,20 @@ The fingerprint applies to all outgoing TLS connections, including those establi
 
 ## HTTPS request processing
 
-Once the MITM tunnel is established, the proxy processes HTTPS requests in a loop (supporting keep-alive), applying the same pipeline as HTTP/1.x:
+Once the MITM tunnel is established, traffic flows through the chosen inner Layer's Channel and the standard Pipeline. For `http1`-routed CONNECT tunnels the request loop matches the plaintext [HTTP/1.x](http.md) flow exactly; for `h2`-routed tunnels see the [HTTP/2 page](http2.md) for stream-level details.
 
-1. **Target scope check** -- re-validates the Host header inside the tunnel (may differ from the CONNECT authority)
-2. **Safety filter** -- checks request body and URL against safety rules
-3. **Plugin hooks** -- dispatches `on_receive_from_client` and other hooks
-4. **Intercept** -- pauses the request for AI agent review if matching rules exist
-5. **Auto-transform** -- applies automatic request/response modifications
-6. **Forward upstream** -- sends the request to the upstream server over TLS
-7. **Record flow** -- stores the request/response as a flow with protocol `HTTPS`
+The Pipeline canonical 8-step chain runs on every Envelope:
+
+`HostScope → HTTPScope → Safety → PluginPre → Intercept → Transform → Macro → PluginPost → Record`
 
 ### Flow recording
 
-HTTPS flows are recorded with:
+Recorded envelopes carry both TLS snapshots produced by the `tlslayer/` Layer:
 
-- Protocol: `HTTPS` (or `SOCKS5+HTTPS` when arriving via a SOCKS5 tunnel)
-- TLS metadata: version, cipher suite, ALPN protocol, server certificate subject
-- Full request/response with headers and body
+- `clientSnap` — the synthetic MITM TLS handshake presented to the client
+- `upstreamSnap` — the real upstream TLS handshake observed at dial time
+
+Each snapshot exposes version, cipher suite, ALPN protocol, peer certificate chain, and SNI. Envelopes also carry the `Envelope.Protocol` of the inner Layer (e.g. `http`, `ws`, `grpc`).
 
 ## Plugin hooks
 
