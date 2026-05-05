@@ -2,17 +2,19 @@
 
 SafetyFilter is a two-part content filtering system that prevents destructive payloads from being sent to target systems (Input Filter) and protects sensitive information from being exposed to AI agents (Output Filter). SafetyFilter rules are part of the Policy layer and **cannot be modified at runtime**.
 
+SafetyFilter is **envelope-native**: rules operate on the typed `Envelope.Message` and the ordered `[]envelope.KeyValue` headers. The Pipeline `SafetyStep` dispatches via a type-switch on `env.Message` to per-protocol safety engines (`internal/rules/http`, `internal/rules/ws`, `internal/rules/grpc`); each engine reuses the regex / preset machinery in `internal/safety` for body, URL, query, and header matching.
+
 ## Input filter
 
-The Input Filter inspects outgoing HTTP requests (body, URL, query string, headers) against regex rules and blocks or logs matches before the request reaches the target.
+The Input Filter inspects outgoing Send-direction messages (body, URL, query string, headers) against regex rules and blocks or logs matches before the message reaches the target. Receive-direction messages always pass through — the Input Filter is Send-only.
 
 ### How it works
 
-When a request is about to be sent (via resend, fuzz, macro, or intercept modify_and_forward), the Input Filter:
+When a message is about to be sent (via the proxy data path, resend, fuzz, macro, or intercept modify_and_forward), the Input Filter:
 
-1. Evaluates the request body, URL, query string, and headers against all input rules
-2. If a rule matches with `block` action, the request is rejected with an error
-3. If a rule matches with `log_only` action, the match is logged but the request proceeds
+1. Evaluates the body, URL, query string, and headers against all input rules
+2. If a rule matches with `block` action, the message is rejected with an error
+3. If a rule matches with `log_only` action, the match is logged but the message proceeds
 
 ### Built-in presets
 
@@ -50,7 +52,7 @@ The Output Filter prevents sensitive information (PII) from being exposed to AI 
 ### How it works
 
 1. **Proxy layer**: Response body and headers are masked before returning to the client
-2. **MCP tool layer**: Query results, resend responses, fuzz results, intercept queue entries, compare diffs, and export data are masked before returning to the AI agent
+2. **MCP tool layer**: Query results, resend responses, fuzz results, intercept queue entries, and export data are masked before returning to the AI agent
 3. **Raw data preserved**: The Flow Store always contains the original unmasked data for human review via the Web UI
 
 ### Built-in PII presets
@@ -101,11 +103,18 @@ The Input Filter is enforced at every point where the proxy sends data to extern
 
 | Tool | Enforcement |
 |------|-------------|
-| **resend** | Body, URL, and headers checked before sending |
+| **Proxy data path** | `SafetyStep` runs on every Send-direction envelope, before transform and downstream encode |
+| **resend_http / resend_ws / resend_grpc** | Typed message checked before sending |
 | **resend_raw** | Raw bytes checked before sending |
-| **fuzz** | Template flow checked at start; each expanded payload checked before sending |
-| **macro** | Each step's outbound request checked before sending |
-| **intercept** | modify_and_forward body, URL, and headers checked before forwarding |
+| **fuzz_http / fuzz_ws / fuzz_grpc / fuzz_raw** | Template envelope checked at start; each expanded payload checked before sending |
+| **macro** | Each step's outbound message checked before sending |
+| **intercept** | `modify_and_forward` envelope re-checked before release (USK-702) |
+
+### Re-check at HoldQueue release
+
+When an operator holds a message via Intercept and chooses **modify-and-forward**, the user-modified envelope is re-evaluated by `SafetyStep` before being released downstream. The original held envelope already passed `SafetyStep` at hold time (the canonical chain runs `Safety → Intercept`), but `modify_and_forward` lets the operator inject content that would bypass that gate — for example, replacing a benign body with a `DROP TABLE` payload.
+
+The re-check uses the same per-protocol engine as the inline check, so coverage is identical for HTTP, WebSocket, and gRPC. If the modified envelope trips the Input Filter, the release is rejected and the envelope is dropped.
 
 The Output Filter is enforced at every point where data is returned to the AI agent:
 
@@ -115,7 +124,6 @@ The Output Filter is enforced at every point where data is returned to the AI ag
 | **query results** | Flow data masked in query output |
 | **resend results** | Response body and headers masked |
 | **fuzz results** | Response data masked |
-| **compare diffs** | Header diff values masked |
 | **export data** | Inline export data masked |
 
 ## Viewing current rules
