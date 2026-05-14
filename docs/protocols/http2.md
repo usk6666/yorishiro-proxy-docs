@@ -25,7 +25,7 @@ The frame engine implements all ten HTTP/2 frame types defined in RFC 9113 Secti
 | PRIORITY | 0x02 | Specifies stream priority (dependency and weight) |
 | RST_STREAM | 0x03 | Terminates a stream with an error code |
 | SETTINGS | 0x04 | Communicates connection-level parameters |
-| PUSH_PROMISE | 0x05 | Reserves a server-initiated stream (not used by the proxy) |
+| PUSH_PROMISE | 0x05 | Reserves a server-initiated stream. The proxy advertises `SETTINGS_ENABLE_PUSH = 0` on the client role and no longer ferries push promises end-to-end (server push has been retired) |
 | PING | 0x06 | Measures round-trip time and keeps connections alive |
 | GOAWAY | 0x07 | Initiates graceful connection shutdown |
 | WINDOW_UPDATE | 0x08 | Manages flow control window sizes |
@@ -49,6 +49,19 @@ The decoder enforces safety limits to prevent resource exhaustion:
 
 Both client-to-proxy and proxy-to-upstream connections maintain independent HPACK state, allowing the proxy to fully decode, inspect, and re-encode headers at each hop.
 
+### SETTINGS emitted by the proxy
+
+The proxy is conservative about what it advertises so that it does not silently disagree with operator intent:
+
+- **`SETTINGS_ENABLE_PUSH`** -- omitted from `ServerRole` (RFC 9113 §7.2.2 makes the field meaningless from a server) and set to `0` on `ClientRole`. End-to-end server push is no longer recorded.
+- **`SETTINGS_ENABLE_CONNECT_PROTOCOL`** -- when an upstream advertises this in its SETTINGS, the proxy mirrors the value to clients so RFC 8441 extended `CONNECT` (the WebSocket-over-HTTP/2 bootstrap) keeps working end-to-end.
+- **`SETTINGS_MAX_HEADER_LIST_SIZE`** -- omitted when the value equals the default (the wire saves a `(k,v)` pair and stays bit-for-bit equivalent to a peer that never sent it).
+- **`SETTINGS_MAX_CONCURRENT_STREAMS`** -- defaults to **500** (raised from 100 in USK-862). Override per listener via [`proxy_start.max_concurrent_streams`](../tools/proxy-start.md) or globally via the [config file](../configuration/config-file.md). Range `1..65535`.
+
+### Connection-specific headers stripped on send
+
+When forwarding requests upstream the proxy strips the RFC 7540 §8.1.2.2 connection-specific headers (`Connection`, `Keep-Alive`, `Proxy-Connection`, `Transfer-Encoding`, `Upgrade`, plus any `te` value other than `trailers`). This prevents accidentally re-emitting HTTP/1.1 hop-by-hop headers over an HTTP/2 connection.
+
 ## Raw frame recording
 
 Every HTTP/2 frame's raw bytes are preserved as they appear on the wire on `Envelope.Raw`. This follows the L7-first, L4-capable architecture principle — you get structured headers, methods, and bodies by default, but you can always access the exact bytes.
@@ -68,7 +81,7 @@ The HTTP/2 Layer exposes the wire as discrete events through its Channel:
 - `H2DataEvent` — DATA frame payload
 - `H2TrailersEvent` — trailer HEADERS-after-DATA blocks
 
-A Channel does **not** assume request/response pairing. Sequence is event-order, numbered from 0. For a server-pushed stream the first event is a `Receive`; the synthetic request that triggered the push is delivered as a separate envelope on the original stream's Channel, carrying the `H2PushPromise` anomaly.
+A Channel does **not** assume request/response pairing. Sequence is event-order, numbered from 0.
 
 Pipeline Steps that want to operate on full request/response pairs (e.g. intercept rules, transforms) are placed downstream of the **HTTPAggregator** (`internal/layer/httpaggregator/`), which folds the event stream into one `HTTPMessage` envelope per completed message. The connector's `dispatchH2Stream` helper picks between the aggregator and the [gRPC Layer](grpc.md) by peeking the first `H2HeadersEvent` for content-type.
 
@@ -108,6 +121,14 @@ curl --http2-prior-knowledge http://127.0.0.1:8080/api/endpoint
 ## h2 (HTTP/2 over TLS)
 
 HTTP/2 over TLS is handled through the HTTPS MITM tunnel. The TLS Layer (`internal/layer/tlslayer/`) terminates TLS on both the client and upstream sides; ALPN routing then chooses the HTTP/2 Layer when both peers agree on `h2`. See [HTTPS MITM](https-mitm.md) for the CONNECT + ALPN details.
+
+## Extended CONNECT (WebSocket over HTTP/2)
+
+RFC 8441 extended `CONNECT` is supported in both directions. When a peer advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`, the proxy mirrors the setting to its counterparty so clients can negotiate `CONNECT` with `:protocol = "websocket"` end-to-end. Once the upgrade succeeds, the H2 Layer hands the post-swap stream to the [WebSocket Layer](websocket.md) and DATA frames flow as WebSocket frames thereafter -- the proxy orchestrates the per-stream sub-stack overlay so that hold/intercept and plugin hooks still receive `WSMessage` envelopes.
+
+## GOAWAY handling
+
+When the upstream emits `GOAWAY` while a stream is held in intercept review, the connector re-dials and replays the held request on a fresh H2 connection so that the operator's release/modify decision is honoured rather than failing the flow.
 
 ## Stream-level flow recording
 

@@ -63,6 +63,10 @@ Full response payloads are not stored on the row. Retrieve them via the [`query`
 
 Each variant traverses the same self-contained `PluginStepPost -> RecordStep` pipeline as `resend_http` (`PluginStepPre` is bypassed per RFC-001 §9.3).
 
+## Job and result persistence
+
+Synchronous fuzz runs persist a row to `fuzz_jobs` (status `"running"`) and one row per variant to `fuzz_results`, so `query` with `resource = "fuzz_jobs"` and `resource = "fuzz_results"` can list and aggregate variants (status-code distribution, outliers, body filters) after the call returns. Per-variant flows carry `origin = "fuzz"` so analyses can exclude them from live capture via `query` `filter.origin = "proxy"`.
+
 ## Examples
 
 ### Fuzz a path segment

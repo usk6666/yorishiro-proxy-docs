@@ -2,6 +2,9 @@
 
 Define and execute macro workflows for multi-step security testing. Macros chain multiple requests together, extract values from responses, and use them in subsequent steps.
 
+!!! note "HTTP-only"
+    Macros operate on HTTP flows only. `define_macro` and `run_macro` reject any step that references a non-HTTP recorded flow (WebSocket, gRPC, Raw TCP, etc.) at entry, directing callers to the protocol-specific resend tools: [`resend_ws`](resend-ws.md), [`resend_grpc`](resend-grpc.md), [`resend_raw`](resend-raw.md).
+
 ## Parameters
 
 | Parameter | Type | Required | Description |

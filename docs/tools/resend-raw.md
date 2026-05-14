@@ -49,6 +49,8 @@ CR/LF in `target_addr` and `sni` is rejected, but never in `override_bytes`, `da
 
 The resend traverses `PluginStepPost -> RecordStep`. `PluginStepPre` and `InterceptStep` are bypassed (RFC-001 §9.3).
 
+The resent stream is finalised on completion: `Stream.State` transitions to `"complete"` on success or `"error"` on failure (USK-789). The new flow records `origin = "resend"`.
+
 ## Examples
 
 ### Replay a recorded TCP flow as-is

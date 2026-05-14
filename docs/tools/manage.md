@@ -21,10 +21,13 @@ Delete flows by ID, by age, by protocol, or all at once.
 |-----------|------|----------|-------------|
 | `flow_id` | string | No | Delete a specific flow by ID |
 | `older_than_days` | integer | No | Delete flows older than this many days (min 1). Requires `confirm` |
-| `protocol` | string | No | Delete flows by protocol (e.g. `"TCP"`, `"WebSocket"`). Requires `confirm` |
-| `confirm` | boolean | No | Required for bulk deletion (age-based, protocol-based, or all) |
+| `protocol` | string | No | Delete flows by canonical protocol family (`"http"`, `"ws"`, `"grpc"`, `"grpc-web"`, `"sse"`, `"raw"`, `"tls-handshake"`). Requires `confirm` |
+| `scheme` | string | No | Delete flows by wire-observed handshake transport: `"http"`, `"https"`, `"tcp"`. Requires `confirm` |
+| `http_version` | string | No | Delete flows by HTTP version (`"http/1.0"`, `"http/1.1"`, `"h2"`, `"h2c"`). Empty-string matches pre-USK-788 rows. Requires `confirm` |
+| `filter` | object | No | Bulk filter (mutually exclusive with the top-level `protocol`/`scheme`/`http_version` axes). Supports `url_pattern`, `time_after`, `time_before` |
+| `confirm` | boolean | No | Required for bulk deletion (age-based, filter-based, or all) |
 
-One of `flow_id`, `older_than_days`, `protocol` (with confirm), or `confirm` (for delete-all) must be specified.
+One of `flow_id`, `older_than_days`, the top-level filter axes (with confirm), `filter` (with confirm), or `confirm` alone (for delete-all) must be specified. Top-level filter axes and `params.filter` cannot be combined in a single call.
 
 #### Response
 
@@ -50,7 +53,9 @@ Filter fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `protocol` | string | Filter by protocol |
+| `protocol` | string | Canonical protocol family (`"http"`, `"ws"`, `"grpc"`, `"grpc-web"`, `"sse"`, `"raw"`, `"tls-handshake"`) |
+| `scheme` | string | Wire-observed handshake transport: `"http"`, `"https"`, `"tcp"`. Use `scheme=https` to export all TLS flows regardless of HTTP version |
+| `http_version` | string | HTTP version (`"http/1.0"`, `"http/1.1"`, `"h2"`, `"h2c"`). Empty-string explicit value matches pre-USK-788 rows |
 | `url_pattern` | string | Filter by URL substring |
 | `time_after` | string | Include flows after this time (RFC3339) |
 | `time_before` | string | Include flows before this time (RFC3339) |
@@ -72,6 +77,9 @@ Filter fields:
 ### import_flows
 
 Import flows from a JSONL file.
+
+!!! note "Path resolution"
+    `input_path` (and `export_flows.output_path`) is resolved relative to the proxy server's working directory at the time the tool runs, not the MCP client's working directory. Use absolute paths when in doubt.
 
 #### Parameters
 
@@ -166,7 +174,7 @@ No parameters required.
   "params": {
     "format": "har",
     "filter": {
-      "protocol": "HTTPS",
+      "scheme": "https",
       "url_pattern": "/api/"
     },
     "output_path": "/tmp/api-flows.har"

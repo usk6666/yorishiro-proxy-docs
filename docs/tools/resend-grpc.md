@@ -66,6 +66,8 @@ Each `messages[]` entry:
 
 Each Start and Data envelope traverses `PluginStepPost -> RecordStep`. End is observation-only (RFC-001 §9.3 surface table marks `(grpc, on_end) = PhaseSupportNone`).
 
+The resent stream is finalised on completion: `Stream.State` transitions to `"complete"` on success or `"error"` on failure (USK-789). The new flow records `origin = "resend"`.
+
 ## Examples
 
 ### Replay a recorded RPC

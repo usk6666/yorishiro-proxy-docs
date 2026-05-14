@@ -61,6 +61,10 @@ Full result-frame payloads are not stored on the row (a malicious upstream could
 
 Each variant traverses the same self-contained `PluginStepPost -> RecordStep` pipeline as `resend_ws` (`PluginStepPre` is bypassed per RFC-001 §9.3).
 
+## Job and result persistence
+
+Synchronous fuzz runs persist a row to `fuzz_jobs` and one row per variant to `fuzz_results`, so `query` (`resource = "fuzz_jobs"` / `"fuzz_results"`) can list and aggregate variants after the call returns. Per-variant flows carry `origin = "fuzz"`.
+
 ## Examples
 
 ### Fuzz the payload of a text frame

@@ -48,6 +48,8 @@ Auto-Pong replies for incoming Pings are emitted by the receive loop and recorde
 
 The resend traverses `PluginStepPost -> RecordStep`. `PluginStepPre` and `InterceptStep` are bypassed (RFC-001 §9.3).
 
+The resent stream is finalised on completion: `Stream.State` transitions to `"complete"` on success or `"error"` on failure (USK-789). The new flow records `origin = "resend"` so callers can filter live capture out of analyses via `query` `filter.origin`.
+
 ## Examples
 
 ### Send a text frame to a recorded stream

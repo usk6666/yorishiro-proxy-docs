@@ -1,6 +1,6 @@
 # query
 
-Unified information query tool. Retrieve flows, flow details, messages, proxy status, configuration, CA certificate, intercept queue, macros, fuzz jobs, fuzz results, and detected technologies.
+Unified information query tool. Retrieve flows, flow details, messages, proxy status, configuration, CA certificate, intercept queue, macros, fuzz jobs, and fuzz results.
 
 ## Parameters
 
@@ -14,18 +14,23 @@ Unified information query tool. Retrieve flows, flow details, messages, proxy st
 | `sort_by` | string | No | | Field to sort results by |
 | `limit` | integer | No | `50` | Maximum items to return (max 1000) |
 | `offset` | integer | No | `0` | Items to skip for pagination |
+| `include_bodies` | boolean | No | `true` | Include message bodies in responses. When `false`, body fields are suppressed; metadata, headers, and `body_truncated` remain. Mirrors `manage.export_flows.include_bodies` |
+| `body_max_bytes` | integer | No | `0` | Truncate per-message body to at most this many bytes (`0` = no cap). When applied, `body_truncated_by_query=true` and `body_original_size` reports the pre-truncation length |
+| `decode_bodies` | boolean | No | `true` | Decode HTTP `Content-Encoding` (gzip / deflate / br / zstd) into `*_body_decoded` fields. The original wire-form body is always returned in `*_body`. Set `false` to skip decoding for performance |
 
 ### filter
 
 | Field | Type | Applies to | Description |
 |-------|------|------------|-------------|
 | `protocol` | string | flows | Canonical Message-type family. One of `"http"`, `"ws"`, `"grpc"`, `"grpc-web"`, `"sse"`, `"raw"`, `"tls-handshake"`. See [Protocol family filter](#protocol-family-filter) |
+| `scheme` | string | flows | Wire-observed handshake transport: `"http"`, `"https"`, `"tcp"`. Use `scheme=https` to match all TLS flows regardless of HTTP version. Application-level schemes (`ws`, `wss`) are rejected -- combine `protocol="ws"` with `scheme="https"` for WS-over-TLS |
+| `http_version` | string | flows | HTTP version filter: `"http/1.0"`, `"http/1.1"`, `"h2"`, `"h2c"`. Empty-string explicit value matches pre-USK-788 rows that lack a recorded version |
+| `origin` | string | flows | Stream origin filter: `"proxy"` (live capture), `"resend"` (resend_* tools), `"fuzz"` (fuzz campaigns) |
 | `method` | string | flows | HTTP method filter (e.g. `"GET"`, `"POST"`) |
 | `url_pattern` | string | flows | URL substring match |
 | `status_code` | integer | flows, fuzz_results | HTTP status code filter |
-| `blocked_by` | string | flows | Blocked flow filter (e.g. `"target_scope"`, `"intercept_drop"`) |
+| `blocked_by` | string | flows | Blocked flow filter (e.g. `"target_scope"`, `"intercept_drop"`, `"safety_filter"`) |
 | `state` | string | flows | Flow lifecycle state (`"active"`, `"complete"`, `"error"`) |
-| `technology` | string | flows | Technology name filter (case-insensitive substring) |
 | `conn_id` | string | flows | Connection ID filter (exact match) |
 | `host` | string | flows | Host filter (matches server_addr or request URL host) |
 | `direction` | string | messages | Message direction (`"send"` or `"receive"`) |
@@ -94,6 +99,9 @@ Get current proxy status and health metrics. No additional parameters.
 
 Returns: `running`, `listen_addr`, `active_connections`, `total_flows`, `db_size_bytes`, `uptime_seconds`, `ca_initialized`, `tls_fingerprint`.
 
+!!! note "Modified intercept variants surface as separate flows"
+    When an intercept rule modifies a request or response, both the original and the modified envelope are recorded as separate flows. The modified flow receives a fresh UUID `id` (no longer the legacy `-modified` suffix) and carries `metadata.variant = "modified"` so import round-trips stay consistent. Filter on `variant=original|modified` (or read the metadata field) to distinguish them.
+
 ### config
 
 Get current configuration including capture scope, TLS passthrough, TCP forwards, and enabled protocols. No additional parameters.
@@ -147,14 +155,6 @@ Supports `filter.status_code`, `filter.body_contains`, `filter.outliers_only`, `
 `sort_by` values: `index_num` (default), `status_code`, `duration_ms`, `response_length`.
 
 Returns: `results[]`, `count`, `total`, `summary`.
-
-### technologies
-
-Aggregate detected technology stacks per host across all completed flows.
-
-Returns: `hosts[]` (host, technologies[] with name, version, category, confidence), `count`.
-
-Categories: `web_server`, `framework`, `language`, `cms`, `cdn`, `waf`, `js_framework`.
 
 ## Examples
 
@@ -265,12 +265,35 @@ Categories: `web_server`, `framework`, `language`, `cms`, `cdn`, `waf`, `js_fram
 }
 ```
 
-### List detected technologies
+### Filter flows by origin (exclude resend / fuzz traffic)
 
 ```json
 // query
 {
-  "resource": "technologies"
+  "resource": "flows",
+  "filter": {"origin": "proxy"}
+}
+```
+
+### Page through metadata-only flow listings
+
+```json
+// query
+{
+  "resource": "flows",
+  "include_bodies": false,
+  "limit": 200
+}
+```
+
+### Cap response body size per message
+
+```json
+// query
+{
+  "resource": "messages",
+  "id": "abc-123",
+  "body_max_bytes": 4096
 }
 ```
 
@@ -303,4 +326,3 @@ Categories: `web_server`, `framework`, `language`, `cms`, `cdn`, `waf`, `js_fram
 - [Flows](../concepts/flows.md) -- Understanding flow data
 - [Intercept](../features/intercept.md) -- Intercept feature guide
 - [Fuzzer](../features/fuzzer.md) -- Fuzzer feature guide
-- [Technology detection](../features/technology-detection.md) -- Technology detection feature guide

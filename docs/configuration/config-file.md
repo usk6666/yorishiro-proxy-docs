@@ -26,8 +26,11 @@ The config file is a single JSON object with the following top-level sections:
   "tls_passthrough": [],
   "capture_scope": {},
   "intercept_rules": {},
+  "intercept_queue": {},
   "auto_transform": [],
   "tcp_forwards": {},
+  "max_body_size": 266338304,
+  "max_concurrent_streams": 500,
   "client_cert": "",
   "client_key": "",
   "host_tls": {},
@@ -131,6 +134,31 @@ Configures request/response intercept rules. This is passed as a raw JSON object
 }
 ```
 
+### `intercept_queue`
+
+Hold-queue defaults for intercepted envelopes. Supports a global timeout / behavior pair and a per-protocol override map (USK-855).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `timeout_ms` | integer | `300000` | Global hold-timeout in ms (min `1000`) |
+| `timeout_behavior` | string | `"auto_release"` | Global behavior on timeout (`auto_release` or `auto_drop`) |
+| `protocol_overrides` | object | | Per-protocol overrides keyed by canonical envelope.Protocol (`http`, `ws`, `grpc`, `grpc-web`, `sse`, `raw`, `tls-handshake`). The literal `"http2"` is rejected -- HTTP/1 and HTTP/2 both envelope as `"http"` |
+
+Built-in per-protocol defaults raise WS / SSE / gRPC / gRPC-Web hold-timeouts to `60000` ms (60 s) so multi-second intercept review windows on long-lived streams do not race the upstream idle timeout; the WS Layer injects synthetic keepalive pings during a hold (USK-854) so the upstream remains alive for the entire window.
+
+```json
+{
+  "intercept_queue": {
+    "timeout_ms": 300000,
+    "timeout_behavior": "auto_release",
+    "protocol_overrides": {
+      "ws":  {"timeout_ms": 120000},
+      "sse": {"timeout_ms": 60000, "timeout_behavior": "auto_drop"}
+    }
+  }
+}
+```
+
 ### `auto_transform`
 
 Configures auto-transform rules for automatic request/response modification. This is passed as a raw JSON array to the transform pipeline.
@@ -193,6 +221,24 @@ ForwardConfig fields:
 | `tls` | `bool` | `false` | Enable TLS MITM termination on this port |
 
 Both formats can be mixed in the same object. Legacy string values are equivalent to `{"target": "host:port", "protocol": "raw"}`.
+
+## Body and stream limits
+
+### `max_body_size`
+
+Per-message body cap shared by HTTP/1.x, HTTP/2, gRPC, gRPC-Web, WebSocket, and SSE. Bodies up to `body_spill_threshold` (default 10 MiB) stay in memory; the surplus is spilled to a temp file. Exceeding the cap surfaces a per-protocol stream error rather than silently truncating.
+
+| Type | Default |
+|------|---------|
+| `integer` (bytes) | `266338304` (≈ 254 MiB) |
+
+### `max_concurrent_streams`
+
+HTTP/2 `SETTINGS_MAX_CONCURRENT_STREAMS` value advertised to clients. Raised from `100` to `500` in USK-862; range `1..65535`. The same knob is exposed at runtime via [`proxy_start.max_concurrent_streams`](../tools/proxy-start.md) and [`configure.max_concurrent_streams`](../tools/configure.md).
+
+| Type | Default |
+|------|---------|
+| `integer` | `500` |
 
 ### SOCKS5 authentication
 

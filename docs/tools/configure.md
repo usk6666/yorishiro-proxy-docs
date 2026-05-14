@@ -16,6 +16,7 @@ Configure runtime proxy settings while the proxy is running. Supports incrementa
 | `socks5_auth` | object | No | | SOCKS5 authentication configuration |
 | `tls_fingerprint` | string | No | | TLS fingerprint profile (`chrome`, `firefox`, `safari`, `edge`, `random`, `none`) |
 | `max_connections` | integer | No | | Maximum concurrent connections (1--100000) |
+| `max_concurrent_streams` | integer | No | | HTTP/2 `SETTINGS_MAX_CONCURRENT_STREAMS` advertised to clients (1--65535) |
 | `peek_timeout_ms` | integer | No | | Protocol detection timeout in ms (100--600000) |
 | `request_timeout_ms` | integer | No | | HTTP request header read timeout in ms (100--600000) |
 | `budget` | object | No | | Diagnostic session budget configuration |
@@ -75,8 +76,18 @@ Configure runtime proxy settings while the proxy is running. Supports incrementa
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `timeout_ms` | integer | `300000` | Timeout in ms for blocked requests (min 1000) |
-| `timeout_behavior` | string | `"auto_release"` | Timeout behavior: `"auto_release"` or `"auto_drop"` |
+| `timeout_ms` | integer | `300000` | Global timeout in ms for held requests (min 1000) |
+| `timeout_behavior` | string | `"auto_release"` | Global timeout behavior: `"auto_release"` or `"auto_drop"` |
+| `protocol_overrides` | object | | Per-protocol hold-timeout overrides (USK-855). Keyed by canonical `envelope.Protocol`: `"http"`, `"ws"`, `"grpc"`, `"grpc-web"`, `"sse"`, `"raw"`, `"tls-handshake"`. The literal `"http2"` is **not** valid -- HTTP/1 and HTTP/2 both envelope as `"http"`. A `null` value removes the keyed override on merge; replace semantics atomically swap the whole map |
+
+Each `protocol_overrides` entry has:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timeout_ms` | integer | Per-protocol hold timeout (≥ 1000 ms). Nil inherits the global value |
+| `timeout_behavior` | string | Per-protocol behavior (`"auto_release"` or `"auto_drop"`). Empty inherits the global value |
+
+Built-in defaults raise the WebSocket / SSE / gRPC hold-timeout to **60s** (USK-855); without keepalive injection these long-lived streams would otherwise time out at the upstream edge during human intercept review. The proxy injects synthetic keepalives during WS holds (USK-854) so the upstream stays alive for the full window.
 
 ### auto_transform
 
@@ -256,10 +267,27 @@ For full-replace semantics, use the `security` tool's `set_budget` action instea
 
 ### Change TLS fingerprint
 
+`tls_fingerprint` is runtime-mutable: the change applies to subsequent outbound dials; in-flight connections retain the fingerprint they were established with.
+
 ```json
 // configure
 {
   "tls_fingerprint": "firefox"
+}
+```
+
+### Override hold-timeout per protocol
+
+```json
+// configure
+{
+  "intercept_queue": {
+    "timeout_ms": 300000,
+    "protocol_overrides": {
+      "ws":  {"timeout_ms": 120000},
+      "sse": {"timeout_ms": 60000, "timeout_behavior": "auto_drop"}
+    }
+  }
 }
 ```
 

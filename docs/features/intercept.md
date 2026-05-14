@@ -194,20 +194,35 @@ Configure the intercept queue behavior using the `configure` tool:
 {
   "intercept_queue": {
     "timeout_ms": 300000,
-    "timeout_behavior": "auto_release"
+    "timeout_behavior": "auto_release",
+    "protocol_overrides": {
+      "ws":  {"timeout_ms": 60000},
+      "sse": {"timeout_ms": 60000}
+    }
   }
 }
 ```
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `timeout_ms` | integer | `300000` (5 min) | Timeout for blocked requests (minimum 1000 ms) |
+| `timeout_ms` | integer | `300000` (5 min) | Global timeout for held envelopes (minimum 1000 ms) |
 | `timeout_behavior` | string | `auto_release` | What happens on timeout: `auto_release` or `auto_drop` |
+| `protocol_overrides` | object | | Per-protocol timeout/behavior overrides keyed by canonical `envelope.Protocol` (`http`, `ws`, `grpc`, `grpc-web`, `sse`, `raw`, `tls-handshake`). `null` removes a key under merge; replace mode atomically swaps the map |
 
 When a blocked request times out:
 
 - **`auto_release`** -- the request is forwarded as-is (default)
 - **`auto_drop`** -- the request is dropped with a 502 response
+
+### Per-protocol hold-timeout defaults
+
+| Protocol | Default hold-timeout |
+|----------|----------------------|
+| `http` | 300 000 ms |
+| `ws`, `sse`, `grpc`, `grpc-web` | **60 000 ms** (USK-855) |
+| `raw`, `tls-handshake` | inherit global (300 000 ms) |
+
+WebSocket and SSE were raised to 60s so multi-second human reviews on long-lived streams do not race against the upstream's idle timeout. While a WebSocket frame is held, the proxy injects synthetic keepalive pings to the upstream (USK-854) so the connection stays alive for the full hold window. The literal `"http2"` is **not** a valid override key -- both HTTP/1 and HTTP/2 envelope as `"http"`.
 
 ## Managing rules
 

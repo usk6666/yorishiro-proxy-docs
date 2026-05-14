@@ -81,17 +81,15 @@ When a request or response is modified by intercept rules or auto-transform, the
 
 ## Scheme
 
-The `scheme` field separates transport-layer information from the L7 protocol. While `protocol` tells you the application-level protocol (HTTP/1.x, HTTP/2, gRPC, WebSocket, Raw TCP), `scheme` tells you how the connection is transported -- whether it uses TLS (encrypted) or plaintext.
+The `scheme` field records the **wire-observed handshake transport** -- whether the underlying connection was plaintext or TLS. It is intentionally orthogonal to the L7 `protocol` family (USK-848 / USK-864): application-level schemes such as `ws` and `wss` are **not** stored or accepted as filter values. For a WebSocket flow, set `protocol = "ws"` and (when relevant) `scheme = "https"`.
 
 | Scheme | Transport | Example protocols |
 |--------|-----------|-------------------|
-| `https` | TLS | HTTP/1.x, HTTP/2, gRPC over TLS |
-| `http` | Plaintext | HTTP/1.x, HTTP/2, gRPC over plaintext |
-| `wss` | TLS | WebSocket over TLS |
-| `ws` | Plaintext | WebSocket over plaintext |
-| `tcp` | Plaintext | Raw TCP |
+| `https` | TLS | HTTP/1.x, HTTP/2, gRPC, gRPC-Web, WebSocket, SSE over TLS |
+| `http` | Plaintext | HTTP/1.x, HTTP/2, gRPC, gRPC-Web, WebSocket, SSE over plaintext |
+| `tcp` | Plaintext | Raw TCP and TLS-handshake passthrough records |
 
-For example, a gRPC flow over TLS has `scheme: "https"` and `protocol: "gRPC"`. This separation lets you filter by transport independently of the L7 protocol.
+For example, a gRPC flow over TLS has `scheme: "https"` and `protocol: "grpc"`. This separation lets you filter by transport independently of the L7 protocol family.
 
 ### Filtering by scheme
 
@@ -105,7 +103,7 @@ Use the `scheme` filter to find flows by transport type. This is especially usef
 }
 ```
 
-This returns HTTP/1.x, HTTP/2, and gRPC flows over TLS. Note that WebSocket over TLS uses `scheme: "wss"`, not `"https"`.
+This returns HTTP/1.x, HTTP/2, gRPC, gRPC-Web, WebSocket, and SSE flows over TLS. Passing `scheme: "ws"` or `"wss"` is rejected -- combine `protocol: "ws"` with `scheme: "https"` to target WS-over-TLS only.
 
 You can combine scheme with other filters:
 
@@ -114,6 +112,38 @@ You can combine scheme with other filters:
 {
   "resource": "flows",
   "filter": {"scheme": "https", "method": "POST"}
+}
+```
+
+## HTTP version
+
+`http_version` is recorded per Flow row when known (`http/1.0`, `http/1.1`, `h2`, `h2c`). Pass it as a filter to disambiguate HTTP/1.1 from HTTP/2 traffic, or pass an empty string to match pre-USK-788 rows that lack a recorded version:
+
+```json
+// query
+{
+  "resource": "flows",
+  "filter": {"http_version": "h2"}
+}
+```
+
+## Origin
+
+Each Stream is tagged with its `origin` when written. This separates live MITM traffic from synthetic tool-driven flows:
+
+| Origin | Source |
+|--------|--------|
+| `proxy` | Live capture (the default for everything observed on a listener) |
+| `resend` | Flows produced by `resend_http`, `resend_ws`, `resend_grpc`, `resend_raw` |
+| `fuzz` | Variants produced by `fuzz_http`, `fuzz_ws`, `fuzz_grpc`, `fuzz_raw` |
+
+Filter on `origin` to scope analyses to only live capture, or to retrieve everything emitted by a fuzz campaign:
+
+```json
+// query
+{
+  "resource": "flows",
+  "filter": {"origin": "fuzz"}
 }
 ```
 
@@ -189,7 +219,6 @@ Tags are key-value string pairs attached to a flow. They carry contextual inform
 | `socks5_target` | SOCKS5 handler | Original target address from SOCKS5 request |
 | `socks5_auth_method` | SOCKS5 handler | Authentication method used |
 | `socks5_auth_user` | SOCKS5 handler | Authenticated username |
-| `technologies` | Technology detection | Detected server technologies (JSON) |
 | `smuggling_*` | Smuggling detector | HTTP request smuggling indicators |
 
 ### Timing

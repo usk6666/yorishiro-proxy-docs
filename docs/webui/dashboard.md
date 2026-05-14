@@ -103,4 +103,3 @@ The Configuration section at the bottom summarizes key proxy settings:
 
 - [Settings](settings.md) -- Configure proxy settings
 - [Security](security.md) -- Manage rate limits and budgets
-- [Technology detection](../features/technology-detection.md) -- How technology detection works

@@ -48,7 +48,7 @@ YP_TLS_FINGERPRINT=firefox yorishiro-proxy
 }
 ```
 
-When no profile is explicitly set via CLI flag or environment variable, `proxy_start` defaults to `chrome`.
+The fingerprint is **runtime-mutable**: subsequent outbound dials use the new profile, while connections already pinned to a pooled upstream Layer retain the fingerprint they were established with. When no profile is explicitly set via CLI flag or environment variable, `proxy_start` defaults to `chrome`.
 
 ## TLS passthrough
 

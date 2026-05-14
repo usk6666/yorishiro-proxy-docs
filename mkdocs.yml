@@ -104,7 +104,6 @@ nav:
       - SafetyFilter: features/safety-filter.md
       - Rate limits & budgets: features/rate-limits.md
       - Flow export & import: features/flow-export-import.md
-      - Technology detection: features/technology-detection.md
   - Protocols:
       - HTTP: protocols/http.md
       - HTTPS MITM: protocols/https-mitm.md

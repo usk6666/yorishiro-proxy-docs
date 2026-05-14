@@ -45,6 +45,17 @@ The response includes `cert_path` (file path) and `fingerprint` (SHA-256 hash) f
     sudo update-ca-certificates
     ```
 
+    Chromium and Firefox on Linux read their own per-user NSSDB rather than the OS trust store. Register the CA there with `certutil` so those browsers trust intercepted traffic:
+
+    ```bash
+    mkdir -p "$HOME/.pki/nssdb"
+    certutil -d sql:"$HOME/.pki/nssdb" \
+      -A -t "C,," -n "yorishiro-proxy" \
+      -i ~/.yorishiro-proxy/ca/ca.crt
+    ```
+
+    `certutil` is provided by `libnss3-tools` on Debian/Ubuntu and `nss-tools` on Fedora/RHEL.
+
 === "Windows"
 
     Run the following command in an Administrator command prompt:
