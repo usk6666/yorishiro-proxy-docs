@@ -14,7 +14,6 @@ Start a proxy listener with optional configuration. The proxy listens on the spe
 | `intercept_rules` | array | No | `[]` | Rules for intercepting requests/responses |
 | `auto_transform` | array | No | `[]` | Rules for automatic request/response modification |
 | `tcp_forwards` | object | No | `{}` | TCP forwarding map (`port` -> target string or ForwardConfig object) |
-| `protocols` | string[] | No | all enabled | Enabled protocols for detection |
 | `socks5_auth` | string | No | `"none"` | SOCKS5 authentication method (`none` or `password`) |
 | `socks5_username` | string | No | | Username for SOCKS5 password auth |
 | `socks5_password` | string | No | | Password for SOCKS5 password auth |
@@ -22,6 +21,7 @@ Start a proxy listener with optional configuration. The proxy listens on the spe
 | `client_cert` | string | No | | PEM client certificate path for mTLS |
 | `client_key` | string | No | | PEM client private key path for mTLS |
 | `max_connections` | integer | No | `128` | Maximum concurrent connections (1--100000) |
+| `max_concurrent_streams` | integer | No | `500` | HTTP/2 `SETTINGS_MAX_CONCURRENT_STREAMS` advertised to clients (1--65535) |
 | `peek_timeout_ms` | integer | No | `30000` | Protocol detection timeout in ms (100--600000) |
 | `request_timeout_ms` | integer | No | `60000` | HTTP request header read timeout in ms (100--600000) |
 
@@ -100,9 +100,8 @@ Maps local listen ports to upstream forwarding configurations. Each entry maps a
 
 Both formats can be mixed in the same `tcp_forwards` object.
 
-### protocols
-
-Valid values: `"HTTP/1.x"`, `"HTTPS"`, `"WebSocket"`, `"HTTP/2"`, `"gRPC"`, `"SOCKS5"`, `"TCP"`.
+!!! note "Port collision with listen_addr"
+    Any `tcp_forwards` port that matches the `listen_addr` port is rejected fail-fast before binding (port `0` on either side is exempt because the kernel assigns distinct ephemeral ports). The check protects against silently-broken listeners that would otherwise be registered but fail to bind.
 
 ### tls_fingerprint
 
@@ -123,7 +122,6 @@ Valid values: `"HTTP/1.x"`, `"HTTPS"`, `"WebSocket"`, `"HTTP/2"`, `"gRPC"`, `"SO
 | `listen_addr` | string | Actual address the proxy is listening on |
 | `status` | string | Proxy state (`"running"`) |
 | `tcp_forwards` | object | Configured TCP forwarding map (if any) |
-| `protocols` | string[] | Enabled protocols (if explicitly configured) |
 
 ## Examples
 
@@ -225,16 +223,6 @@ Valid values: `"HTTP/1.x"`, `"HTTPS"`, `"WebSocket"`, `"HTTP/2"`, `"gRPC"`, `"SO
 }
 ```
 
-### Start with specific protocols
-
-```json
-// proxy_start
-{
-  "listen_addr": "127.0.0.1:8080",
-  "protocols": ["HTTP/1.x", "HTTPS", "gRPC"]
-}
-```
-
 ### Start with SOCKS5 password authentication
 
 ```json
@@ -261,8 +249,7 @@ Valid values: `"HTTP/1.x"`, `"HTTPS"`, `"WebSocket"`, `"HTTP/2"`, `"gRPC"`, `"SO
 // proxy_start
 {
   "name": "socks-listener",
-  "listen_addr": "127.0.0.1:1080",
-  "protocols": ["SOCKS5"]
+  "listen_addr": "127.0.0.1:1080"
 }
 ```
 

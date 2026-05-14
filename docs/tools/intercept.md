@@ -203,6 +203,20 @@ For `RawMessage` envelopes. `bytes_override` and `patches` are mutually exclusiv
 }
 ```
 
+## Hold-window timeouts
+
+Each held envelope is subject to a hold-timeout configured on the intercept queue. Defaults:
+
+| Protocol | Default hold-timeout |
+|----------|----------------------|
+| `http` | 300 000 ms (5 min) |
+| `ws` | 60 000 ms |
+| `sse` | 60 000 ms |
+| `grpc` / `grpc-web` | 60 000 ms |
+| `raw`, `tls-handshake` | inherit global (300 000 ms) |
+
+While a WebSocket frame is held, the proxy injects synthetic keepalive pings to the upstream so it does not idle out during human review (USK-854). Configure per-protocol overrides via `configure.intercept_queue.protocol_overrides` -- see [`configure`](configure.md#intercept_queue).
+
 ## Related pages
 
 - [Intercept](../features/intercept.md) -- Intercept feature guide

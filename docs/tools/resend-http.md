@@ -10,7 +10,7 @@ Resend or construct an HTTP/1.x or HTTP/2 request with `HTTPMessage`-typed schem
 | `method` | string | Conditional | | HTTP method (e.g. `"GET"`, `"POST"`). Required when `flow_id` is empty |
 | `scheme` | string | Conditional | | `"http"` or `"https"`. Required when `flow_id` is empty |
 | `authority` | string | Conditional | | Host header / `:authority` value. Required when `flow_id` is empty |
-| `path` | string | Conditional | | Request path including the leading slash. Required when `flow_id` is empty |
+| `path` | string | Conditional | | Request path including the leading slash. Required when `flow_id` is empty. A literal `?` in `path` is auto-split into `path` (before `?`) plus `raw_query` (after `?`); supplying both `raw_query` AND a `?` in `path` returns an error |
 | `raw_query` | string | No | | Raw query string without the leading `?` |
 | `headers` | array | No | | Ordered header list as `[{"name": "...", "value": "..."}]`. Preserves wire case, order, and duplicates |
 | `body` | string | No | | Request body interpreted per `body_encoding` |
@@ -51,6 +51,8 @@ Header names and values are rejected if they contain CR/LF characters (CWE-113 g
 ## Pipeline placement
 
 The resend traverses `PluginStepPost -> RecordStep`. `PluginStepPre` and `InterceptStep` are bypassed (RFC-001 §9.3) so post-mutation hooks fire exactly once on the resent envelope while pre-pipeline annotation hooks stay quiet.
+
+The resent stream is finalised on completion: `Stream.State` transitions to `"complete"` on success or `"error"` on failure (USK-789). The new flow records `origin = "resend"` so `query` callers can filter live capture out of analyses via `filter.origin = "proxy"`.
 
 ## Examples
 

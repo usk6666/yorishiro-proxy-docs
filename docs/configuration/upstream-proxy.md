@@ -134,9 +134,10 @@ Combine proxy chaining with TLS passthrough to skip MITM for specific domains:
 
 ## Behavior notes
 
-- The upstream proxy setting affects all outgoing connections from the proxy, including both HTTP and HTTPS (CONNECT) traffic.
+- The upstream proxy setting is **per-listener** (USK-826). Each `proxy_start` call carries its own `upstream_proxy`; one listener can dial direct while another chains through a corporate proxy.
+- The upstream proxy setting affects all outgoing connections from the listener, including both HTTP and HTTPS (CONNECT) traffic and dial-time SOCKS5 routing for raw/TCP forwards (USK-797).
 - Changing the upstream proxy at runtime via `configure` applies to new connections only. Existing connections continue using their original route.
-- Proxy credentials in the URL (e.g., `http://user:pass@proxy:3128`) are sent as `Proxy-Authorization` headers for HTTP proxies, or as SOCKS5 username/password authentication.
+- Proxy credentials in the URL (e.g., `http://user:pass@proxy:3128`) are sent as `Proxy-Authorization` headers for HTTP proxies, or as SOCKS5 username/password authentication (RFC 1929). The SOCKS5 password authenticator is wired into the live data path so credentials work for both control and live dispatch (USK-797).
 - The `configure` tool's response redacts proxy credentials for security.
 
 ## Related pages

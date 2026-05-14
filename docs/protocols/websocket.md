@@ -140,6 +140,14 @@ Intercepted WebSocket frames include the following metadata:
 
 You can modify the frame payload using `override_body` with the `modify_and_forward` action, or drop the frame entirely with the `drop` action.
 
+### Hold-window keepalive (USK-854)
+
+WebSocket connections often sit idle for many seconds between application frames, and most upstream load balancers will tear the socket down before a human reviewer finishes inspecting a held frame. While a frame is held in intercept review, the Layer injects synthetic `Ping` frames toward the upstream at a configurable interval so the upstream sees liveness and does not close the connection. Combined with the per-protocol hold-timeout default (`60 s` for `ws`, see [`configure.intercept_queue`](../tools/configure.md#intercept_queue)), this lets long human review windows complete without the upstream timing out.
+
+### WebSocket over HTTP/2 (RFC 8441 extended CONNECT)
+
+WebSocket can also be negotiated over an HTTP/2 stream using the extended `CONNECT` method (`:protocol = "websocket"`). The proxy mirrors `SETTINGS_ENABLE_CONNECT_PROTOCOL` end-to-end so clients can drive the upgrade, and the H2 Layer orchestrates a per-stream sub-stack overlay: once the upgrade succeeds, subsequent DATA frames on that stream are routed into the WebSocket Layer and surface as `WSMessage` envelopes. Plugin hooks, intercept rules, and recording behave identically to native WebSocket flows. See [HTTP/2 -- Extended CONNECT](http2.md#extended-connect-websocket-over-http2).
+
 ## permessage-deflate (RFC 7692)
 
 permessage-deflate is opt-in via the Layer's `WithDeflateEnabled` master switch plus per-direction `WithClientDeflate` / `WithServerDeflate` options. When the upstream server negotiates permessage-deflate in the `Sec-WebSocket-Extensions` response header:
@@ -148,7 +156,7 @@ permessage-deflate is opt-in via the Layer's `WithDeflateEnabled` master switch 
 2. **Decompressed payload on the FIN frame** — for fragmented compressed messages, the FIN frame's `WSMessage.Payload` is the decompressed bytes of the entire reassembled message. Continuation envelopes carry the per-fragment compressed bytes; a single fragment is rarely a complete deflate stream and applications should not attempt to decompress one in isolation.
 3. **Single-frame compressed messages** — when `Fin=true` on the start frame, `WSMessage.Payload` carries the decompressed bytes directly.
 
-The Layer respects `server_no_context_takeover` and `client_no_context_takeover` parameters and configures decompression window bits per the negotiated extension parameters.
+The Layer respects `server_no_context_takeover` and `client_no_context_takeover` parameters and configures decompression window bits per the negotiated extension parameters. The negotiated `Sec-WebSocket-Extensions` value is preserved end-to-end (USK-863) so plugins and the upstream see the exact extension parameters the client negotiated; multi-frame context-takeover is handled by carrying a single `deflateState` per direction across the fragmented message boundary.
 
 ## Limitations
 

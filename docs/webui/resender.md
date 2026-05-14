@@ -113,16 +113,25 @@ The TCP response viewer shows the raw response data with byte count and duration
 
 ## Send history
 
-Below the editor, a history list records all resend operations from the current session. Each entry shows:
+Below the editor, a history list records resend operations server-side, not just from the current browser session: the panel is backed by the same flow store that the [`query`](../tools/query.md) tool reads, so opening the WebUI on a different machine surfaces the same history. Each entry shows:
 
 - Status code or byte count badge
 - HTTP method or RAW/REPLAY indicator
 - Target URL or address
 - Protocol badge (RAW, REPLAY)
+- Origin badge (`proxy`, `resend`, `fuzz`)
 - Dry-run indicator
 - Tag (if set)
 - Duration
 - Timestamp
+
+### Origin filter and paging
+
+A filter chip restricts the list to a single `origin` -- typically `resend` to focus on tool-driven replays, or `fuzz` to triage a campaign. The list pages server-side (USK-787) so deep histories stay responsive even after weeks of activity.
+
+### Decoded bodies
+
+When the upstream applied `Content-Encoding` (gzip / deflate / br / zstd), the body viewer offers a toggle between the original compressed wire bytes and the decoded plaintext (USK-738). The hex preview is capped at 4 KiB; switch to text mode for larger payloads.
 
 ## Related pages
 
