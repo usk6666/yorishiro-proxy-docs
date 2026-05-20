@@ -65,6 +65,27 @@ When a request passes through the proxy, the security model evaluates it in this
 
 When neither layer has any rules, the proxy operates in **open mode** -- all targets are permitted. As soon as any rule is configured in either layer, the mode changes to **enforcing**.
 
+### Enforcement surface
+
+Scope evaluation runs on every traffic path that exits the proxy, not just on agent-initiated requests:
+
+- **MCP tool traffic** -- `resend_*`, `fuzz_*`, `test_target`, and (since USK-879) the new `grpc_schema discover` reflection probe all share one `TargetScope` instance with the connector's handler gates.
+- **Proxy-relayed client traffic** -- CONNECT tunnels, plain-HTTP forward proxy, and SOCKS5 tunnels invoke the same evaluator via the connector's `HostScopeStep` / `HTTPScopeStep` in the Pipeline (USK-879 fix; before this, an agent that scoped itself down via `set_target_scope` could still reach denied hosts through the same proxy when no `target_scope_policy` was configured at boot).
+
+This unified enforcement is the load-bearing reason `set_target_scope` is meaningful as an agent self-restriction.
+
+### Applicability scopes (Agent vs Policy Layer)
+
+Three security primitives -- `target_scope`, `rate_limit`, `budget` -- have explicit applicability rules that determine which layer's value applies at which point in the request lifecycle (USK-842):
+
+| Primitive | Policy Layer | Agent Layer |
+|-----------|--------------|-------------|
+| `target_scope` | Sets the immutable outer boundary. Loaded at startup from config or `-target-policy-file`. | Narrows within the policy boundary via `security set_target_scope`. Cannot expand beyond policy. |
+| `rate_limit` | Sets ceilings (global RPS / per-host RPS). | May set equal-or-stricter limits via `security set_rate_limits`. |
+| `budget` | Sets ceilings (`max_total_requests`, `max_duration`). | May set equal-or-stricter via `security set_budget`. |
+
+The `security` MCP tool's `get_target_scope` / `get_rate_limits` / `get_budget` actions report both layers' current values so an agent can verify what is actually in effect.
+
 ## Applied to: target scope
 
 Target scope controls which network destinations the proxy can reach. Each rule specifies a combination of hostname (with optional wildcard), ports, path prefix, and schemes. All specified fields must match for a rule to apply (AND logic).

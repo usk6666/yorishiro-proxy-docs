@@ -217,8 +217,21 @@ ForwardConfig fields:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `target` | `string` | (required) | Upstream `host:port` address |
-| `protocol` | `string` | `"auto"` | L7 protocol: `auto`, `raw`, `http`, `http2`, `grpc`, `websocket` |
-| `tls` | `bool` | `false` | Enable TLS MITM termination on this port |
+| `protocol` | `string` | `"auto"` | L7 protocol: `auto`, `raw`, `http`, `http2`, `grpc`, `websocket`, `sse` (USK-913) |
+| `tls` | `bool` | `false` | Enable client-side TLS MITM termination on the forwarded listen port |
+| `upstream_tls` | `bool` | `false` | Wrap the upstream-dial connection in TLS (USK-911 / USK-916). Independent of `tls` |
+| `upstream_insecure_skip_verify` | `bool` | inherit `-insecure` | Per-entry override for upstream TLS certificate verification when `upstream_tls=true`: `true` to skip verification on this entry, `false` to enforce, or omit to inherit the global flag (USK-918) |
+
+#### TLS × UpstreamTLS matrix
+
+`tls` controls the listener-side handshake; `upstream_tls` controls the upstream-side handshake. They are independent and never inferred from `target`'s scheme/port:
+
+| `tls` | `upstream_tls` | Client wire | Upstream wire | Typical use case |
+|-------|----------------|-------------|---------------|------------------|
+| `false` | `false` | plaintext | plaintext | Raw L4/L7 forwarding (default) |
+| `true` | `false` | TLS | plaintext | TLS termination only (downstream offload) |
+| `false` | `true` | plaintext | TLS | Plaintext client -> TLS-only upstream |
+| `true` | `true` | TLS | TLS | Full MITM: terminate then re-encrypt upstream |
 
 Both formats can be mixed in the same object. Legacy string values are equivalent to `{"target": "host:port", "protocol": "raw"}`.
 

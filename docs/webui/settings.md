@@ -10,7 +10,7 @@ The Settings page is organized into 11 tabs:
 
 | Tab | Description |
 |-----|-------------|
-| **Proxy** | Listener management and protocol filters |
+| **Proxy** | Listener management |
 | **Capture Scope** | Control which traffic is captured |
 | **TLS Passthrough** | Bypass MITM for specific hosts |
 | **TCP Forwards** | Port forwarding rules |
@@ -24,10 +24,6 @@ The Settings page is organized into 11 tabs:
 
 ## Proxy
 
-The Proxy tab has two sections:
-
-### Proxy control
-
 Manage proxy listeners (start/stop). The panel shows currently running listeners with their name, listen address, active connection count, and uptime.
 
 To start a new listener:
@@ -37,14 +33,12 @@ To start a new listener:
     - **Name** -- Optional listener name
     - **Listen address** -- Address and port to bind (default: `127.0.0.1:8080`)
     - **Upstream proxy** -- Optional upstream proxy URL
-    - **Protocols** -- Checkboxes to enable/disable individual protocols (HTTP/1.x, HTTPS, WebSocket, HTTP/2, gRPC, TCP). All are enabled by default.
 3. Click **Start**
 
 To stop a listener, click the **Stop** button next to it (with confirmation).
 
-### Protocol filter
-
-Enable or disable individual protocols for active listeners. This controls which protocol types the proxy will handle.
+!!! note "Protocol selection removed (USK-870)"
+    The previous "Protocols" checkbox group on this panel was removed alongside the deletion of `proxy_start.protocols`. The half-implemented protocol allow-list had no use case that wasn't already covered by `target_scope` (host), `intercept_rules` (request pattern), `tls_passthrough` (MITM target), and `capture_scope` (recording target). Use those knobs to scope what the proxy handles.
 
 ## Capture scope
 

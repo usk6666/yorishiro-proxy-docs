@@ -106,6 +106,23 @@ Layer packages live under `internal/layer/`:
 
 The `Layer` and `Channel` interfaces (`internal/layer/layer.go`, `internal/layer/channel.go`) are the only contract a new protocol implementation must satisfy.
 
+### Wire-level overlay envelopes
+
+Several Layers also emit forensic **wire-level overlay** envelopes alongside the canonical semantic envelope, so the exact bytes at a lower protocol layer remain queryable even after reassembly:
+
+| Overlay | Emitted by | Purpose |
+|---------|------------|---------|
+| `h1-chunk` | `internal/layer/http1` | One envelope per HTTP/1.x chunked-transfer chunk boundary (USK-895) |
+| `h2-frame` | `internal/layer/http2` + `internal/layer/httpaggregator` | One envelope per HTTP/2 DATA frame, including WS/SSE-over-h2 paths (USK-897 / USK-899) |
+| `grpc-lpm-frame` | `internal/layer/grpc` | One envelope per gRPC length-prefixed-message frame (USK-896) |
+| `grpcweb-base64` | `internal/layer/grpcweb` | One envelope per gRPC-Web base64-encoded body chunk |
+
+Overlay rows are hidden from default reads; pass `filter.wire_level="h2-frame"` (etc.) to [`query`](../tools/query.md) or [`manage.export_flows`](../tools/manage.md) to surface them. See [Flows: wire-level overlays](flows.md#wire-level-overlays).
+
+## L7 dispatch on TCP forwards
+
+When a `tcp_forwards` entry sets `protocol` to `auto` (the default) the proxy peeks the initial bytes and dispatches the connection through the matching Layer stack: HTTP/1.x, HTTP/2 (h2c), gRPC, WebSocket, SSE (operator-declared via `protocol: "sse"`), or `raw` bytes for opaque traffic (USK-911 .. USK-918). Combined with the `tls` / `upstream_tls` matrix on `ForwardConfig`, this lets a forwarded port behave like any other inbound listener -- intercept, transform, plugin, and capture-scope rules apply to the dispatched envelopes the same way they apply to CONNECT-MITM traffic. The dispatch logic lives in `internal/proxybuild/tcp_forward.go`.
+
 ## Canonical pipeline
 
 The Pipeline is a fixed 8-step chain that runs on every Envelope. Plugin handling is split across two steps (`PluginPre` before Intercept, `PluginPost` after Macro), so the diagram shows nine boxes for one chain.

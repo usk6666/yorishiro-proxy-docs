@@ -207,6 +207,20 @@ gRPC flows are built on top of HTTP/2. Each gRPC call is a separate flow with me
 
 Raw TCP flows capture any traffic that does not match a recognized protocol. Each direction's data chunks are recorded as separate messages with `send_bytes` and `receive_bytes` in the `protocol_summary`. TCP forwarding mappings (`tcp_forwards`) let you route specific local ports to upstream addresses for targeted capture.
 
+## Wire-level overlays
+
+A single application-level flow may also have one or more **wire-level overlay** rows persisted alongside it. The overlays capture the exact wire bytes at a lower protocol layer for forensic inspection -- useful when an HTTP/2 DATA frame, an h1 chunk boundary, or a gRPC LPM frame matters for diagnostics and the semantic envelope has already reassembled them.
+
+| `wire_level` value | Records |
+|--------------------|---------|
+| `semantic` (default for almost every read path) | The canonical application-level envelope (HTTPMessage, GRPCDataMessage, WSMessage, SSEMessage, ...) |
+| `h1-chunk` | One row per HTTP/1.x chunked-transfer chunk boundary (USK-895) |
+| `h2-frame` | One row per HTTP/2 DATA frame (USK-897 / USK-899), including WS/SSE-over-h2 paths |
+| `grpc-lpm-frame` | One row per gRPC length-prefixed-message frame (USK-896) |
+| `grpcweb-base64` | One row per gRPC-Web base64-encoded body chunk |
+
+Overlay rows are excluded from default views: `flow.message_count`, `flow.message_preview`, and `messages` listings only include semantic envelopes unless `filter.wire_level` is set to a specific overlay or to `"all"`. JSONL export honours the same filter, so forensic exports preserve the wire when you ask for it. HAR is a semantic format and always ignores wire-level overlays.
+
 ## Flow metadata
 
 ### Tags
@@ -216,10 +230,17 @@ Tags are key-value string pairs attached to a flow. They carry contextual inform
 | Tag | Set by | Purpose |
 |-----|--------|---------|
 | `error` | Error recording | Upstream failure details |
+| `failure_reason` | Error recording | Coarse classification for connection/TLS failures. Notable values include `client_tls_error` (USK-858: the proxy's MITM cert was rejected by the client, e.g. CA not installed or pinned) and `upstream_tls_error` (proxy -> upstream handshake failed, e.g. cert expiry / chain trust) |
+| `intercept_release_eof` | Intercept release | Attached only on successful downstream relay of an intercept-released stream (USK-857); retries and partial failures no longer flag this tag |
+| `terminated_by` | Layer (SSE/WS/H2) | Side that closed the stream (`"client"`, `"upstream"`) -- e.g. SSE-over-H2 mid-stream cancels record `terminated_by=client` (USK-903) |
 | `socks5_target` | SOCKS5 handler | Original target address from SOCKS5 request |
 | `socks5_auth_method` | SOCKS5 handler | Authentication method used |
 | `socks5_auth_user` | SOCKS5 handler | Authenticated username |
 | `smuggling_*` | Smuggling detector | HTTP request smuggling indicators |
+
+### Anomalies
+
+Parser-detected anomalies on the HTTP / WS / gRPC / gRPC-Web / SSE layers are persisted on the flow row and surfaced through the `query` tool's `flow` and `messages` resources under `anomalies[]`. Examples: malformed gRPC-Web base64, gRPC LPM framing errors, SSE missing-data conditions, HTTP header smuggling indicators, `proto_schema_mismatch` when a `.proto`-registered decode fails. Anomalies remain inspectable after the fact -- they are stored alongside the wire bytes, not just logged.
 
 ### Timing
 

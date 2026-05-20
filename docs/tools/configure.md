@@ -167,6 +167,7 @@ For full-replace semantics, use the `security` tool's `set_budget` action instea
 | `socks5_auth` | object | Current auth state: `method` (if changed) |
 | `tls_fingerprint` | string | Current TLS fingerprint profile (if changed) |
 | `max_connections` | integer | Current max connections (if changed) |
+| `max_concurrent_streams` | integer | Current HTTP/2 `SETTINGS_MAX_CONCURRENT_STREAMS` (if changed) |
 | `peek_timeout_ms` | integer | Current peek timeout in ms (if changed) |
 | `request_timeout_ms` | integer | Current request timeout in ms (if changed) |
 | `budget` | object | Current budget state (if changed) |

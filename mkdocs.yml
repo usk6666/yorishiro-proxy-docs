@@ -93,6 +93,7 @@ nav:
       - intercept: tools/intercept.md
       - manage: tools/manage.md
       - security: tools/security.md
+      - grpc_schema: tools/grpc-schema.md
       - plugin_introspect: tools/plugin-introspect.md
   - Features:
       - Resender: features/resender.md

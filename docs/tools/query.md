@@ -33,6 +33,7 @@ Unified information query tool. Retrieve flows, flow details, messages, proxy st
 | `state` | string | flows | Flow lifecycle state (`"active"`, `"complete"`, `"error"`) |
 | `conn_id` | string | flows | Connection ID filter (exact match) |
 | `host` | string | flows | Host filter (matches server_addr or request URL host) |
+| `wire_level` | string | flows, messages | Wire-fidelity overlay selector: `"semantic"` (default; the canonical application-level envelope), `"h1-chunk"`, `"h2-frame"`, `"grpc-lpm-frame"`, `"grpcweb-base64"`, or `"all"`. Overlay rows are hidden from `message_count` / `message_preview` and from default `messages` listings unless this filter explicitly includes them. See [Wire-level overlays](#wire-level-overlays) below |
 | `direction` | string | messages | Message direction (`"send"` or `"receive"`) |
 | `body_contains` | string | fuzz_results | Response body substring filter |
 | `outliers_only` | boolean | fuzz_results | Return only outlier results |
@@ -54,6 +55,31 @@ The `filter.protocol` value matches a canonical `Envelope.Protocol` family. Each
 | `tls-handshake` | TLS handshake records observed without a higher-level decode |
 
 Only these canonical values are accepted -- the legacy literals (`HTTP/1.x`, `HTTPS`, `HTTP/2`, `WebSocket`, `gRPC`, `gRPC-Web`, `TCP`, `SOCKS5+...`) were retired in N9. Use `filter.scheme` to find all TLS flows (e.g. `scheme=https` returns HTTP/1.x + HTTP/2 + gRPC over TLS).
+
+### Wire-level overlays
+
+A single application-level (semantic) flow may be persisted alongside one or more **wire-level overlay** rows that capture the exact wire bytes at a lower protocol layer. These overlays are forensic detail: they let you inspect the wire even when the semantic envelope has been re-encoded or reassembled.
+
+| `wire_level` value | Records |
+|--------------------|---------|
+| `semantic` (default) | The canonical application-level envelope (HTTPMessage, GRPCDataMessage, WSMessage, SSEMessage, ...) |
+| `h1-chunk` | One row per HTTP/1.x chunked-transfer chunk boundary |
+| `h2-frame` | One row per HTTP/2 DATA frame (per direction, per stream), including WS/SSE-over-h2 paths |
+| `grpc-lpm-frame` | One row per gRPC length-prefixed-message frame |
+| `grpcweb-base64` | One row per gRPC-Web base64-encoded body chunk |
+| `all` | Include every wire-level row alongside `semantic` |
+
+Overlay rows are excluded by default from `flow.message_count`, `flow.message_preview`, and `messages` listings. Pass `filter.wire_level="h2-frame"` (etc.) to surface them, or `wire_level="all"` to get every layer.
+
+HAR export ignores the wire_level filter -- HAR is a semantic format. Use the JSONL export (`manage.export_flows` with `filter.wire_level`) when forensic preservation of the wire matters.
+
+### gRPC schema-aware decode
+
+When [`grpc_schema`](grpc-schema.md) has a registered descriptor for the flow's `(grpc_service, grpc_method)` pair and `decode_bodies=true`, the body is decoded via `protojson` with real `.proto` field names and `body_decoded_encoding="proto-json"` is set on the response. On parse failure the proxy falls back to the schemaless path and surfaces `body_decode_anomaly { type: "proto_schema_mismatch" }`. Without a registered schema, gRPC bodies fall back to schemaless decode (`body_decoded_encoding="proto-schemaless-json"`).
+
+### HTTPMessage anomalies
+
+Parser-detected anomalies on HTTP messages (header smuggling indicators, malformed framing, etc.) are persisted on the flow row and surfaced by the `flow` and `messages` resources under `anomalies[]`. Filter for flows that carry an anomaly by combining `protocol=http` with a body-level filter, or fetch the full flow detail for inspection.
 
 ## Resources
 
@@ -104,9 +130,9 @@ Returns: `running`, `listen_addr`, `active_connections`, `total_flows`, `db_size
 
 ### config
 
-Get current configuration including capture scope, TLS passthrough, TCP forwards, and enabled protocols. No additional parameters.
+Get current configuration including capture scope, TLS passthrough, and TCP forwards. No additional parameters.
 
-Returns: `capture_scope`, `tls_passthrough`, `tcp_forwards`, `enabled_protocols`.
+Returns: `capture_scope`, `tls_passthrough`, `tcp_forwards`.
 
 ### ca_cert
 

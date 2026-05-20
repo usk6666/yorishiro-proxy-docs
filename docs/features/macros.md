@@ -170,6 +170,10 @@ Use `§variable§` syntax in `override_url`, `override_headers`, and `override_b
 
 Variables are expanded at execution time, after any preceding step's extractions have populated the KV Store.
 
+### Unresolved variable warnings
+
+If a `§variable§` reference remains in the rendered request after substitution -- typically because the variable was never extracted or `initial_vars` did not provide it -- the macro engine surfaces a non-fatal warning on the step result rather than silently sending the literal `{{var}}` string upstream (#838). Inspect `step_results[*].warnings` to find unresolved templates and either define the variable in `initial_vars` or fix the upstream extract that was supposed to populate it.
+
 ## Guards (conditional execution)
 
 Guards control whether a step executes based on conditions from a previous step's result:

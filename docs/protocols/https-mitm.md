@@ -118,6 +118,17 @@ Recorded envelopes carry both TLS snapshots produced by the `tlslayer/` Layer:
 
 Each snapshot exposes version, cipher suite, ALPN protocol, peer certificate chain, and SNI. Envelopes also carry the `Envelope.Protocol` of the inner Layer (e.g. `http`, `ws`, `grpc`).
 
+### Diagnosing handshake failures (`client_tls_error` vs `upstream_tls_error`)
+
+Failed MITM handshakes are tagged with a `failure_reason` so the agent can distinguish *which side* refused the handshake (USK-858):
+
+| `failure_reason` | Means | Typical causes |
+|------------------|-------|----------------|
+| `client_tls_error` | The client rejected the proxy's dynamically-issued certificate (TLS alert observed at the client-facing handshake) | CA not installed / not trusted, certificate pinning, or a proxy-CA mismatch between processes |
+| `upstream_tls_error` | The proxy's dial to the upstream failed at the TLS layer | Upstream cert expired, hostname mismatch, untrusted chain, broken cipher negotiation |
+
+Before USK-858 the proxy misclassified `unknown_certificate` / `bad_certificate` alerts from the client side as `upstream_tls_error`, hiding the real cause. Query for the recorded reason via `flow.tags["failure_reason"]` rather than parsing `tags["error"]`.
+
 ## Plugin hooks
 
 The `on_tls_handshake` lifecycle hook fires after each successful TLS handshake, providing:
