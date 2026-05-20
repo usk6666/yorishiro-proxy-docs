@@ -10,10 +10,10 @@ The resend and fuzz surfaces are split per protocol. Each tool owns a typed JSON
 
 | Tool | Purpose |
 |------|---------|
-| [`proxy_start`](proxy-start.md) | Start a proxy listener. Listen address, capture scope, TLS passthrough, intercept rules, auto-transform, TCP forwarding, protocol selection |
+| [`proxy_start`](proxy-start.md) | Start a proxy listener. Listen address, capture scope, TLS passthrough, intercept rules, auto-transform, TCP forwarding |
 | [`proxy_stop`](proxy-stop.md) | Stop a single listener by name or all listeners |
 | [`configure`](configure.md) | Modify runtime settings (upstream proxy, scope, TLS passthrough, intercept rules, auto-transform, limits, timeouts) |
-| [`query`](query.md) | Retrieve flows, flow details, messages, status, config, CA cert, intercept queue, macros, fuzz jobs, fuzz results, technologies |
+| [`query`](query.md) | Retrieve flows, flow details, messages, status, config, CA cert, intercept queue, macros, fuzz jobs, fuzz results |
 | [`resend_http`](resend-http.md) | Resend an HTTP/1.x or HTTP/2 request with `HTTPMessage`-typed schema |
 | [`resend_ws`](resend-ws.md) | Resend a WebSocket frame with `WSMessage`-typed schema |
 | [`resend_grpc`](resend-grpc.md) | Resend a gRPC RPC with `GRPCStart`/`Data`/`End`-typed schema |
@@ -26,6 +26,7 @@ The resend and fuzz surfaces are split per protocol. Each tool owns a typed JSON
 | [`intercept`](intercept.md) | Act on intercepted traffic (release, modify and forward, drop) with per-protocol typed payloads |
 | [`manage`](manage.md) | Manage flow data and CA (delete, export, import, regenerate) |
 | [`security`](security.md) | Security controls (target scope, rate limits, diagnostic budgets, SafetyFilter) |
+| [`grpc_schema`](grpc-schema.md) | Manage `.proto` schemas for schema-aware gRPC decode (`query`) and encode (`resend_grpc`); supports descriptor-set upload, host `protoc`, and reflection-based discovery |
 | [`plugin_introspect`](plugin-introspect.md) | Read-only list of loaded plugins, their hook registrations, and redacted vars |
 
 ## Tool calling format

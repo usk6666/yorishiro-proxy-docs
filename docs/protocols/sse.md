@@ -179,6 +179,14 @@ Each SSE event passes through the following steps in order:
 7. **Output filter** -- PII masking / block rules applied to the data
 8. **Forward** -- the (possibly filtered) event bytes are written to the client
 
+## TCP-forward dispatch
+
+SSE is also a valid operator-declared `protocol` value on a `tcp_forwards` entry (USK-913). Setting `protocol: "sse"` on a forward declares that the upstream returns a streaming `text/event-stream` response, mirroring `"websocket"` as the declared expectation that the request initiates an RFC 6455 Upgrade. The dispatcher then routes the connection through the SSE Layer the same way a CONNECT-MITM stream would be. See [proxy_start TCP forwards](../tools/proxy-start.md#tcp_forwards).
+
+## Intercept hold-timeout
+
+SSE inherits the per-protocol intercept hold-timeout override system (USK-855). The built-in default for `sse` is **60 s** (raised from the 8 s global default in USK-855 / #860), giving operators a realistic review window before the upstream's idle timer fires. Configure overrides via [`configure.intercept_queue.protocol_overrides`](../tools/configure.md#intercept_queue).
+
 ## Limitations
 
 - **Receive-only Layer** -- SSE is half-duplex server→client; `Send` on the SSE Channel returns `ErrSendUnsupported`

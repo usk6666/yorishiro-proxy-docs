@@ -80,7 +80,9 @@ Maps local listen ports to upstream forwarding configurations. Each entry maps a
 |-------|------|----------|---------|-------------|
 | `target` | string | Yes | -- | Upstream address in `host:port` format |
 | `protocol` | string | No | `"auto"` | Expected protocol for L7 parsing |
-| `tls` | boolean | No | `false` | Enable TLS MITM termination on the forwarded port |
+| `tls` | boolean | No | `false` | Enable client-side TLS MITM termination on the forwarded listen port |
+| `upstream_tls` | boolean | No | `false` | Wrap the upstream-dial connection in TLS (USK-911 / USK-916). Independent of `tls` -- target's scheme/port are advisory only |
+| `upstream_insecure_skip_verify` | boolean | No | inherit `-insecure` | Per-entry override for upstream TLS certificate verification when `upstream_tls=true`. Set `true` to skip verification on this entry, `false` to enforce, or omit to inherit the global `Config.InsecureSkipVerify` (USK-918) |
 
 **Protocol values:**
 
@@ -91,9 +93,21 @@ Maps local listen ports to upstream forwarding configurations. Each entry maps a
 | `"http"` | Parse traffic as HTTP/1.x |
 | `"http2"` | Parse traffic as HTTP/2 |
 | `"grpc"` | Parse traffic as gRPC (over HTTP/2) |
-| `"websocket"` | Parse traffic as WebSocket |
+| `"websocket"` | Operator-declared expectation that the request initiates an RFC 6455 Upgrade |
+| `"sse"` | Operator-declared expectation that the upstream returns a `text/event-stream` response (USK-913) |
 
-**TLS MITM:** when `tls` is `true`, the proxy terminates TLS on the forwarded port. It issues a certificate using the target hostname and then applies L7 parsing to the decrypted traffic. This is useful for inspecting TLS-wrapped services like gRPC-over-TLS or HTTPS backends.
+**TLS modes (`tls` × `upstream_tls` matrix):**
+
+`tls` and `upstream_tls` are independent: `tls` controls the client-direction handshake on the listen port; `upstream_tls` controls the upstream-direction handshake to `target`. The four combinations cover the realistic deployment shapes:
+
+| `tls` | `upstream_tls` | Client wire | Upstream wire | Typical use case |
+|-------|----------------|-------------|---------------|------------------|
+| `false` | `false` | plaintext | plaintext | Raw L4/L7 forwarding (default) |
+| `true` | `false` | TLS | plaintext | TLS termination only (downstream offload) |
+| `false` | `true` | plaintext | TLS | Plaintext client -> TLS-only upstream |
+| `true` | `true` | TLS | TLS | Full MITM: terminate then re-encrypt upstream |
+
+When `tls=true`, the proxy issues a certificate using the target hostname and applies L7 parsing to the decrypted traffic. When `upstream_tls=true`, the proxy uses the global TLS fingerprint, SNI derived from `target`, and the configured verification / client-cert settings -- or the per-entry `upstream_insecure_skip_verify` override.
 
 !!! note
     Setting `tls: true` with `protocol: "raw"` is valid but unusual -- TLS is terminated, yet the decrypted payload is relayed as raw bytes without L7 parsing.
@@ -219,6 +233,23 @@ Both formats can be mixed in the same `tcp_forwards` object.
       "tls": true
     },
     "3306": "db.example.com:3306"
+  }
+}
+```
+
+### TCP forward with upstream TLS and per-entry verification override
+
+```json
+// proxy_start
+{
+  "listen_addr": "127.0.0.1:8080",
+  "tcp_forwards": {
+    "50051": {
+      "target": "grpcbin.local:50051",
+      "protocol": "grpc",
+      "upstream_tls": true,
+      "upstream_insecure_skip_verify": true
+    }
   }
 }
 ```

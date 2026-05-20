@@ -176,9 +176,27 @@ You can also filter by flow type to find streaming RPCs:
 
 The Layer's compression policy is strict. v1 supports only `identity` (no-op) and `gzip` (compress/gzip). Any other `grpc-encoding` value on a `Compressed=true` LPM returns `*layer.StreamError{Code: ErrorProtocol}` from `Next` or `Send`.
 
+## Schema-aware decode and encode
+
+Out of the box the gRPC Layer treats payloads as opaque bytes. When you register a `.proto` schema for a `(service, method)` pair via the [`grpc_schema`](../tools/grpc-schema.md) MCP tool, two paths gain real protobuf awareness:
+
+- **Decode (`query`)** -- matching `GRPCDataMessage` bodies are decoded via `protoreflect.DynamicMessage` + `protojson` with real field names, and `body_decoded_encoding="proto-json"` is set on the response. Parse failure falls back to the schemaless path and surfaces a `proto_schema_mismatch` anomaly (USK-923).
+- **Encode (`resend_grpc`)** -- `body_encoding="proto-json"` parses the payload JSON against the registered input descriptor, encodes it to proto wire bytes, and LPM-frames it.
+
+Without a registered schema, gRPC payloads fall back to **schemaless decode**: a synthetic-key JSON via `internal/encoding/protobuf` (`body_decoded_encoding="proto-schemaless-json"`, USK-922). The schemaless path is lossless for unknown fields and extensions; the schema-aware path is more readable but drops fields not in the descriptor. See [grpc_schema -- Lossy round-trip](../tools/grpc-schema.md#lossy-round-trip-warning) for the round-trip semantics.
+
+Schemas can be registered three ways:
+
+| Source | When to use |
+|--------|-------------|
+| `descriptor_set` (recommended) | Compile `.proto` to a `FileDescriptorSet` with `protoc --include_imports --descriptor_set_out=…` and upload base64. No `protoc` on the proxy host. |
+| `file` | The proxy invokes a host `protoc` against absolute `.proto` paths (resolved under CWD or `import_paths`). |
+| `discover` | Reflection-based discovery against an upstream that exports `grpc.reflection.v1.ServerReflection`. |
+
+The reflection chatter from `discover` is **not** recorded as a Flow (control-plane traffic); the registered entry's `source_label` is `reflection://<target_addr>` for traceability.
+
 ## Limitations
 
-- **No protobuf decoding** -- payloads are stored as raw bytes; the proxy does not decode Protocol Buffers messages
 - **HTTP/2 only** -- this Layer handles gRPC over HTTP/2. For browser-style gRPC over HTTP/1.x or HTTP/2 see [gRPC-Web](grpc-web.md)
 - **Compression algorithms** -- only `identity` and `gzip` are supported; other `grpc-encoding` values surface as a stream error
 - **Reassembly cap** -- LPMs exceeding `MaxGRPCMessageSize` (254 MiB) on the wire or after gunzip are rejected with a `*layer.StreamError`
@@ -190,4 +208,5 @@ The Layer's compression policy is strict. v1 supports only `identity` (no-op) an
 - [HTTPS MITM](https-mitm.md) -- TLS interception for gRPC over TLS
 - [resend_grpc](../tools/resend-grpc.md) -- replay a gRPC envelope
 - [fuzz_grpc](../tools/fuzz-grpc.md) -- mutate and replay gRPC envelopes
+- [grpc_schema](../tools/grpc-schema.md) -- register `.proto` schemas for protojson decode/encode
 - [Plugin hook reference](../plugins/hook-reference.md) -- full hook documentation

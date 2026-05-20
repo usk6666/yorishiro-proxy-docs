@@ -207,6 +207,7 @@ These flags apply to the `server` subcommand (or bare invocation without a subco
 | `-ui-dir` | `YP_UI_DIR` | -- | Directory for WebUI static files, overrides embedded assets |
 | `-target-policy-file` | `YP_TARGET_POLICY_FILE` | -- | Target scope policy JSON file path |
 | `-safety-filter` | `YP_SAFETY_FILTER_ENABLED` | `false` | Enable SafetyFilter engine |
+| `-max-concurrent-streams` | `YP_MAX_CONCURRENT_STREAMS` | `0` | HTTP/2 `SETTINGS_MAX_CONCURRENT_STREAMS` advertised to clients. `0` uses the H2 Layer default (`500`). Range `1..4294967295` (USK-862) |
 
 ### Environment variable naming
 

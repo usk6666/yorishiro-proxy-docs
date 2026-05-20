@@ -56,14 +56,15 @@ Filter fields:
 | `protocol` | string | Canonical protocol family (`"http"`, `"ws"`, `"grpc"`, `"grpc-web"`, `"sse"`, `"raw"`, `"tls-handshake"`) |
 | `scheme` | string | Wire-observed handshake transport: `"http"`, `"https"`, `"tcp"`. Use `scheme=https` to export all TLS flows regardless of HTTP version |
 | `http_version` | string | HTTP version (`"http/1.0"`, `"http/1.1"`, `"h2"`, `"h2c"`). Empty-string explicit value matches pre-USK-788 rows |
+| `wire_level` | string | Wire-fidelity overlay selector (USK-932): `"semantic"` (default), `"h1-chunk"`, `"h2-frame"`, `"grpc-lpm-frame"`, `"grpcweb-base64"`, or `"all"`. JSONL emits one record per row; HAR ignores this field |
 | `url_pattern` | string | Filter by URL substring |
 | `time_after` | string | Include flows after this time (RFC3339) |
 | `time_before` | string | Include flows before this time (RFC3339) |
 
 **Format details:**
 
-- **JSONL** -- each line is a complete JSON object. Supports inline and file output.
-- **HAR** -- HTTP Archive 1.2 format compatible with browser DevTools, Burp Suite, and OWASP ZAP. File output only. Raw TCP and gRPC flows are excluded. WebSocket flows include `_webSocketMessages`.
+- **JSONL** -- each line is a complete JSON object. Supports inline and file output. With `wire_level` set to a non-`"semantic"` value, overlay rows are emitted as additional lines so forensic exports preserve the wire.
+- **HAR** -- HTTP Archive 1.2 format compatible with browser DevTools, Burp Suite, and OWASP ZAP. File output only. Raw TCP and gRPC flows are excluded. WebSocket flows include `_webSocketMessages`. HAR is a semantic format and ignores the `wire_level` filter.
 
 #### Response
 

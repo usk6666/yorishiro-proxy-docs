@@ -14,7 +14,7 @@ On first startup, the CA certificate is automatically generated and saved to:
 No manual action is required to generate the CA -- it is created the first time yorishiro-proxy runs.
 
 !!! tip
-    Running `yorishiro-proxy install ca --trust` generates the CA certificate and registers it in your OS trust store automatically. You can skip the manual steps below.
+    Running `yorishiro-proxy install ca --trust` generates the CA certificate and registers it in your OS trust store automatically. On Linux it additionally registers the CA into the per-user NSSDB so Chromium and Firefox trust intercepted traffic out of the box (USK-857). You can skip the manual steps below.
 
 ## Check the CA certificate path
 
@@ -45,7 +45,7 @@ The response includes `cert_path` (file path) and `fingerprint` (SHA-256 hash) f
     sudo update-ca-certificates
     ```
 
-    Chromium and Firefox on Linux read their own per-user NSSDB rather than the OS trust store. Register the CA there with `certutil` so those browsers trust intercepted traffic:
+    Chromium and Firefox on Linux read their own per-user NSSDB rather than the OS trust store. `yorishiro-proxy install ca --trust` registers the CA there automatically (USK-857). If you installed the CA manually instead, register it explicitly with `certutil`:
 
     ```bash
     mkdir -p "$HOME/.pki/nssdb"

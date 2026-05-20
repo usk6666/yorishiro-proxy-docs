@@ -27,8 +27,16 @@ Each entry is one length-prefixed message (LPM) on the gRPC stream:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `payload` | string | Yes | | LPM payload interpreted per `body_encoding` |
-| `body_encoding` | string | No | `"text"` | `"text"` or `"base64"` |
+| `body_encoding` | string | No | `"text"` | `"text"`, `"base64"`, `"proto-json"`, or `"proto-schemaless-json"` |
 | `compressed` | boolean | No | `false` | Set the LPM compression flag. Requires `encoding` to be set |
+
+#### Body encodings
+
+- `"text"` / `"base64"` -- send the literal bytes after decoding the text/base64 wrapper. Use these when you have the wire payload in hand.
+- `"proto-json"` -- the payload is JSON keyed by the registered `.proto`'s field names. The proxy parses it against the schema bound to `(service, method)` via [`grpc_schema`](grpc-schema.md), encodes it to proto wire bytes, and LPM-frames it. `protojson.UnmarshalOptions{DiscardUnknown:true}` silently drops keys outside the schema; type mismatches still fail. Without a registered schema this returns a hard error.
+- `"proto-schemaless-json"` -- synthetic-key JSON via `internal/encoding/protobuf`. Lossless for unknown fields and extensions, at the cost of opaque numeric keys.
+
+When `flow_id` is supplied and the source flow carries fields outside the registered schema, the response includes a non-fatal `warnings[]` entry. See [Lossy round-trip](grpc-schema.md#lossy-round-trip-warning) on the `grpc_schema` page for the full mechanics.
 
 ### End semantics
 
@@ -106,4 +114,5 @@ The resent stream is finalised on completion: `Stream.State` transitions to `"co
 - [resend_ws](resend-ws.md) -- WebSocket frame resend
 - [resend_raw](resend-raw.md) -- Raw bytes resend
 - [fuzz_grpc](fuzz-grpc.md) -- gRPC fuzz with the same schema
+- [grpc_schema](grpc-schema.md) -- register `.proto` schemas for `body_encoding="proto-json"`
 - [Resender](../features/resender.md) -- Resender feature guide
