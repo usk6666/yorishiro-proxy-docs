@@ -66,8 +66,13 @@ A common session follows this pattern:
 7. **Export findings** with `manage` for reporting
 8. **Stop the proxy** with `proxy_stop`
 
+## MCP prompts (vulnerability-verification playbooks)
+
+Alongside the typed tools above, the MCP server publishes nine **prompts** -- self-contained vulnerability-verification playbooks (`verify-idor`, `verify-sqli`, `verify-xss`, `verify-csrf`, `audit-auth`, `fuzz-endpoint`, `replay-with-mods`, `capture-traffic`, `stateful-fuzz-loop`). Prompts ship inside the binary and are delivered to MCP hosts via the standard `prompts/list` / `prompts/get` surface; the model executes the playbook by issuing the typed tool calls listed above. See [MCP prompts](../guides/mcp-prompts.md) for the catalogue, arguments, and host-side usage.
+
 ## Related pages
 
+- [MCP prompts](../guides/mcp-prompts.md) -- Vulnerability-verification playbooks delivered over MCP
 - [Architecture](../concepts/architecture.md) -- How yorishiro-proxy is built
 - [MCP-first design](../concepts/mcp-first-design.md) -- Why everything is an MCP tool
 - [Quick setup](../getting-started/quick-setup.md) -- Getting started guide

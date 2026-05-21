@@ -9,6 +9,8 @@ see the upstream file for the complete per-PR entries.
 
 ### Added
 
+- **MCP Prompts: nine vulnerability-verification playbooks** -- `verify-idor`, `verify-sqli`, `verify-xss`, `verify-csrf`, `audit-auth`, `fuzz-endpoint`, `replay-with-mods`, `capture-traffic`, `stateful-fuzz-loop` are now served via the MCP `prompts/list` / `prompts/get` surface (USK-949 / #28). Hosts that surface prompts (Claude Code, Claude Desktop, ...) see them automatically on connect. See [MCP prompts](../guides/mcp-prompts.md).
+- **`proxy_start` reset semantics + partial-update guidance** -- the [`proxy_start`](../tools/proxy-start.md) tool description, JSONSchema, and help resource now spell out that each call fully resets prior session settings, and document the recommended "initialize with `proxy_start`, update with `configure`" pattern (#29).
 - **`grpc_schema` MCP tool** -- register `.proto` schemas via descriptor-set upload, host `protoc`, or reflection-based discovery (USK-923 / USK-926 / USK-927 / USK-928 / USK-933). Unlocks `body_decoded_encoding="proto-json"` on [`query`](../tools/query.md) and `body_encoding="proto-json"` on [`resend_grpc`](../tools/resend-grpc.md). See [grpc_schema](../tools/grpc-schema.md).
 - **TCP forward L7 dispatch** -- `tcp_forwards[]` entries gain `upstream_tls`, `upstream_insecure_skip_verify`, and an `sse` protocol value. The full TLS × UpstreamTLS matrix is documented on [proxy_start](../tools/proxy-start.md#tcp_forwards) and [config_file](../configuration/config-file.md#tcp_forwards) (USK-911 .. USK-918).
 - **Wire-level overlay envelopes** -- `h1-chunk`, `h2-frame`, `grpc-lpm-frame`, `grpcweb-base64` rows surface via `filter.wire_level` on [`query`](../tools/query.md#wire-level-overlays) and [`manage.export_flows`](../tools/manage.md) for forensic export (USK-895 / USK-896 / USK-897 / USK-899 / USK-932).
@@ -29,6 +31,7 @@ see the upstream file for the complete per-PR entries.
 
 ### Removed
 
+- **Breaking**: `yorishiro-proxy install skills` subcommand, the `--skills-dir` flag, and the bundled `.claude/skills/yorishiro/` skill tree are deleted (USK-951 / #32). Replacement: the same vulnerability-verification playbooks are served as [MCP Prompts](../guides/mcp-prompts.md) over `prompts/list` / `prompts/get`. Existing `.claude/skills/yorishiro/` directories on disk are inert -- delete them at your convenience. `yorishiro-proxy install skills` now errors with `unknown install target`.
 - **Breaking**: technology detection (the `query` tool's `technologies` resource and `technology` filter, plus the `internal/fingerprint/` package) is deleted (USK-843). Migrate to response-header matching via existing `query` filters or a Starlark plugin.
 - **Breaking**: `proxy_start.protocols` MCP input and `query("config").enabled_protocols` output are deleted (USK-870). The WebUI Settings -> Proxy panel no longer shows the protocol-selection toggle. Use `target_scope` (host), `intercept_rules` (request pattern), `tls_passthrough` (MITM target), and `capture_scope` (recording target) for the same effect.
 
@@ -49,6 +52,7 @@ see the upstream file for the complete per-PR entries.
 - **WebSocket StreamID reuse across handshake -> frames (#843)** -- keeps Upgrade + data-frame phase under the same Stream identity.
 - **`query` filter `scheme=ws|wss` is rejected** (USK-848).
 - **`manage` export/import path resolution clarified** -- relative paths resolve against the proxy server's CWD (USK-868).
+- **TLS passthrough audit: `ECONNRESET` classified as tunneled** (USK-952 / #30) -- peer-side ungraceful close after bytes have flowed (TLS `close_notify` in flight, abrupt browser / mobile-handover close) is now an `outcome="tunneled"` audit record instead of being misclassified as `outcome="failed"`. Genuine mid-stream failures (i/o timeout, no route to host) still land in the `failed` bucket.
 
 ### Docs
 
