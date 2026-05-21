@@ -7,6 +7,12 @@ see the upstream file for the complete per-PR entries.
 
 ## Unreleased
 
+_No changes yet._
+
+## 0.17.0 (2026-05-21)
+
+This release migrates the bundled vulnerability-verification playbooks from a filesystem-installed `.claude/skills/` skill tree to MCP Prompts delivered over the standard `prompts/list` / `prompts/get` surface. The `yorishiro-proxy install skills` subcommand and the `--skills-dir` flag are removed -- after upgrading, the same nine playbooks become visible to your MCP host automatically on next connect, with no install step.
+
 ### Added
 
 - **MCP Prompts: nine vulnerability-verification playbooks** -- `verify-idor`, `verify-sqli`, `verify-xss`, `verify-csrf`, `audit-auth`, `fuzz-endpoint`, `replay-with-mods`, `capture-traffic`, `stateful-fuzz-loop` are now served via the MCP `prompts/list` / `prompts/get` surface (USK-949 / #28). Hosts that surface prompts (Claude Code, Claude Desktop, ...) see them automatically on connect. See [MCP prompts](../guides/mcp-prompts.md).
