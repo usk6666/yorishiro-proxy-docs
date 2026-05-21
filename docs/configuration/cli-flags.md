@@ -23,7 +23,7 @@ yorishiro-proxy [subcommand] [flags]
 |------------|-------------|
 | `server` | Start the proxy server (default when no subcommand given) |
 | `client` | Call MCP tools via CLI against a running server |
-| `install` | Install and configure components (MCP, CA, Skills, Playwright) |
+| `install` | Install and configure components (MCP, CA, Playwright) |
 | `upgrade` | Check for and install updates from GitHub Releases |
 | `version` | Print version information |
 
@@ -108,11 +108,13 @@ yorishiro-proxy install [target] [flags]
 
 | Target | Description |
 |--------|-------------|
-| *(none)* | Install all components (MCP + CA + Skills) |
+| *(none)* | Install all components (MCP + CA) |
 | `mcp` | Register MCP configuration only |
 | `ca` | Generate CA certificate only |
-| `skills` | Install Claude Code skills only |
 | `playwright` | Configure Playwright integration (auto-detects browser, installs if needed, applies `--no-sandbox` in containers) |
+
+!!! note "`skills` target removed"
+    The previous `skills` target and `--skills-dir` flag were removed when vulnerability-verification playbooks migrated to [MCP Prompts](../guides/mcp-prompts.md). Playbooks ship inside the binary and are delivered to the MCP host over `prompts/list` — no filesystem install needed.
 
 #### Flags
 
@@ -123,7 +125,6 @@ yorishiro-proxy install [target] [flags]
 | `--listen-addr` | `127.0.0.1:8080` | Proxy listen address |
 | `--trust` | `false` | Register CA in OS trust store (requires sudo). Only valid with `ca` target or no target |
 | `--ca-dir` | -- | CA certificate output directory |
-| `--skills-dir` | -- | Skills installation directory |
 
 #### Examples
 
@@ -136,9 +137,6 @@ yorishiro-proxy install mcp
 
 # Generate CA and register in OS trust store
 yorishiro-proxy install ca --trust
-
-# Install skills only
-yorishiro-proxy install skills
 
 # Interactive wizard mode
 yorishiro-proxy install --interactive
@@ -169,11 +167,7 @@ yorishiro-proxy upgrade
 yorishiro-proxy upgrade --check
 ```
 
-After upgrading, you may want to update skills:
-
-```bash
-yorishiro-proxy install skills
-```
+After upgrading, the bundled MCP prompt playbooks ship inside the new binary — no separate update step is needed. The new prompt set becomes visible to MCP hosts on the next reconnect.
 
 ### `version`
 

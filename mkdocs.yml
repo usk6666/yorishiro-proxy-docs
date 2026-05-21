@@ -142,7 +142,7 @@ nav:
       - API testing: guides/api-testing.md
       - Multi-agent: guides/multi-agent.md
       - proxychains: guides/proxychains.md
-      - Claude Code skills: guides/claude-code-skills.md
+      - MCP prompts: guides/mcp-prompts.md
   - Reference:
       - Built-in codecs: reference/built-in-codecs.md
       - Changelog: reference/changelog.md

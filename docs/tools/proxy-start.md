@@ -2,6 +2,11 @@
 
 Start a proxy listener with optional configuration. The proxy listens on the specified address and begins intercepting HTTP/HTTPS/SOCKS5 traffic. You can run multiple listeners simultaneously by assigning each a unique name.
 
+!!! warning "Reset semantics -- not a delta-apply tool"
+    Each `proxy_start` call **fully resets** all prior session settings to the values supplied in the request. Fields omitted from the request revert to their defaults -- including `capture_scope`, `tls_passthrough`, `intercept_rules`, `auto_transform`, `tcp_forwards`, SOCKS5 auth, TLS fingerprint, and connection/timeout limits. Use `proxy_start` for first-time startup or session initialization. For in-session partial updates to a running listener (adding a single rule, changing one timeout, etc.), use [`configure`](configure.md) instead.
+
+    See [Common misuse: proxy_start as a partial-update tool](#common-misuse-proxy_start-as-a-partial-update-tool) below for the anti-pattern and the recommended initialize-then-configure workflow.
+
 ## Parameters
 
 | Parameter | Type | Required | Default | Description |
@@ -136,6 +141,68 @@ Both formats can be mixed in the same `tcp_forwards` object.
 | `listen_addr` | string | Actual address the proxy is listening on |
 | `status` | string | Proxy state (`"running"`) |
 | `tcp_forwards` | object | Configured TCP forwarding map (if any) |
+
+## Common misuse: proxy_start as a partial-update tool
+
+`proxy_start` is **not** a delta-apply tool. Calling it repeatedly to "add one more intercept rule" wipes every other setting that was previously established for the listener.
+
+### Anti-pattern (do NOT do this)
+
+```json
+// proxy_start -- step 1: set up the session
+{
+  "listen_addr": "127.0.0.1:8080",
+  "capture_scope": {"includes": [{"hostname": "api.target.com"}]},
+  "tls_passthrough": ["*.googleapis.com"]
+}
+```
+
+```json
+// proxy_start -- step 2 (WRONG): trying to add an intercept rule.
+// This RESETS capture_scope back to "capture all" and clears tls_passthrough,
+// because both fields are omitted from this second request.
+{
+  "listen_addr": "127.0.0.1:8080",
+  "intercept_rules": [
+    {
+      "id": "r1",
+      "enabled": true,
+      "direction": "request",
+      "conditions": {"host_pattern": "api\\.target\\.com"}
+    }
+  ]
+}
+```
+
+### Recommended pattern: initialize with `proxy_start`, update with `configure`
+
+```json
+// proxy_start -- one-shot initialization
+{
+  "listen_addr": "127.0.0.1:8080",
+  "capture_scope": {"includes": [{"hostname": "api.target.com"}]},
+  "tls_passthrough": ["*.googleapis.com"]
+}
+```
+
+```json
+// configure -- in-session update: add an intercept rule without touching the rest
+{
+  "operation": "merge",
+  "intercept_rules": {
+    "add": [
+      {
+        "id": "r1",
+        "enabled": true,
+        "direction": "request",
+        "conditions": {"host_pattern": "api\\.target\\.com"}
+      }
+    ]
+  }
+}
+```
+
+See [`configure`](configure.md) for the full merge / replace surface (add, remove, enable, disable per rule ID, or full-section replacement).
 
 ## Examples
 
