@@ -1,0 +1,32 @@
+/* Brand colours taken from docs/images/yorishiro-proxy-logo.svg */
+:root,
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #1b2140;
+  --md-primary-fg-color--light: #2c3566;
+  --md-primary-fg-color--dark: #10142a;
+  --md-primary-bg-color: #e9ecf5;
+  --md-primary-bg-color--light: #e9ecf5b3;
+}
+
+:root {
+  --md-accent-fg-color: #c9962b;
+  --md-accent-fg-color--transparent: #c9962b1a;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-accent-fg-color: #e2b755;
+  --md-accent-fg-color--transparent: #e2b7551a;
+}
+
+.md-header__button.md-logo img {
+  height: 1.8rem;
+  width: auto;
+}
+
+:root {
+  --md-typeset-a-color: #3b4a9e;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-typeset-a-color: #e2b755;
+}
