@@ -1,7 +1,8 @@
 # yorishiro-proxy
 
 <p align="center">
-  <img src="images/yorishiro-proxy_banner.png" alt="yorishiro-proxy" width="600">
+  <img src="images/yorishiro-proxy-logo-light.svg#only-light" alt="yorishiro-proxy" width="600">
+  <img src="images/yorishiro-proxy-logo-dark.svg#only-dark" alt="yorishiro-proxy" width="600">
 </p>
 
 <p align="center">
@@ -11,13 +12,12 @@
 
 <p align="center">
   <a href="https://github.com/usk6666/yorishiro-proxy/actions/workflows/ci.yml"><img src="https://github.com/usk6666/yorishiro-proxy/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://goreportcard.com/report/github.com/usk6666/yorishiro-proxy"><img src="https://goreportcard.com/badge/github.com/usk6666/yorishiro-proxy" alt="Go Report Card"></a>
   <a href="https://github.com/usk6666/yorishiro-proxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
 </p>
 
 ---
 
-yorishiro-proxy runs as an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server, giving AI agents full control over proxy operations through eleven MCP tools. Designed for use with Claude Code and other MCP-compatible agents, it enables automated security testing workflows without manual UI interaction. An embedded Web UI is also available for visual inspection and interactive use.
+yorishiro-proxy runs as an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server, giving AI agents full control over proxy operations through a set of typed MCP tools. Designed for use with Claude Code and other MCP-compatible agents, it enables automated security testing workflows without manual UI interaction. An embedded Web UI is also available for visual inspection and interactive use.
 
 !!! warning "Beta"
     yorishiro-proxy is under active development. APIs, configuration formats, and protocol behavior may change between minor versions. Non-HTTP/HTTPS protocols (gRPC, WebSocket, Raw TCP, SOCKS5) are at an earlier stage of maturity and may have known limitations.
@@ -26,21 +26,30 @@ yorishiro-proxy runs as an [MCP (Model Context Protocol)](https://modelcontextpr
 
 - **Traffic interception & recording** — MITM proxy with automatic CA certificate management
 - **Resender** — Replay requests with header/body/URL overrides, JSON patches, and raw HTTP editing
-- **Fuzzer** — Automated payload injection with sequential/parallel modes and async execution
+- **Fuzzer** — Typed per-protocol fuzzers with position-driven mutations, macro hooks, and per-variant upstream proxy rotation
 - **Macro** — Multi-step request sequences with variable extraction and template substitution
 - **Intercept** — Hold and inspect requests/responses in real time, then release, modify, or drop
 - **Auto-transform** — Automatic request/response modification rules for matching traffic
-- **Target scope** — Two-layer security boundary (Policy + Agent) to restrict reachable hosts
-- **Multi-protocol** — HTTP/1.x, HTTPS (MITM), HTTP/2 (h2c/h2), gRPC, WebSocket, Raw TCP, SOCKS5
+- **Target scope** — Two-layer security boundary (Policy + Agent) to restrict reachable hosts; the operator can hot-reload the policy with `SIGHUP`
+- **Multi-protocol** — HTTP/1.x, HTTPS (MITM), HTTP/2 (h2c/h2), gRPC, gRPC-Web, WebSocket, SSE, Raw TCP, SOCKS5
+- **Browser-coherent fingerprint** — Firefox TLS ClientHello and HTTP/2 fingerprint by default; client JA3/JA4 captured on every MITM flow
+- **Upstream proxy rotation** — Chain through HTTP or SOCKS5 proxies, with per-listener IP rotation via URL templates
 - **AI safety** — SafetyFilter blocks destructive payloads and masks PII; rate limiting and diagnostic budgets
 - **Plugin system** — Extend proxy behavior with [Starlark](https://github.com/google/starlark-go) scripts
+- **Built-in docs** — Every tool reference is available to agents through the `docs` MCP tool, and offline through `yorishiro-proxy docs`
 - **Web UI** — Embedded React/Vite dashboard for visual inspection and interactive testing
 
 ## Quick start
 
 ### 1. Get the binary
 
-Download a prebuilt binary from the [GitHub Releases](https://github.com/usk6666/yorishiro-proxy/releases) page, or build from source:
+Install via npm (the prebuilt binary for your platform is fetched as an optional dependency):
+
+```bash
+npm i -g @usk6666/yorishiro-proxy
+```
+
+Alternatively, download a prebuilt binary from the [GitHub Releases](https://github.com/usk6666/yorishiro-proxy/releases) page, or build from source:
 
 ```bash
 git clone https://github.com/usk6666/yorishiro-proxy.git
@@ -94,7 +103,7 @@ For detailed setup instructions, see the [Getting started](getting-started/insta
 
 ## MCP tools
 
-All proxy operations are exposed through seventeen MCP tools:
+All proxy operations are exposed through typed MCP tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -115,6 +124,8 @@ All proxy operations are exposed through seventeen MCP tools:
 | [`manage`](tools/manage.md) | Manage flow data (delete/export/import) and CA certificate regeneration |
 | [`security`](tools/security.md) | Configure target scope rules, rate limits, diagnostic budgets, and SafetyFilter (Policy Layer + Agent Layer) |
 | [`plugin_introspect`](tools/plugin-introspect.md) | List loaded Starlark plugins and their (protocol, event, phase) hook registrations (read-only) |
+| [`grpc_schema`](tools/grpc-schema.md) | Register `.proto` schemas for schema-aware gRPC decode and encode |
+| [`docs`](tools/docs.md) | Self-service documentation for every tool, by topic or section |
 
 See the [MCP tools overview](tools/overview.md) for details.
 
@@ -155,7 +166,7 @@ The Web UI communicates with the backend via Streamable HTTP MCP — the same pr
 |---------|-------------|
 | [Getting started](getting-started/installation.md) | Installation, MCP configuration, CA certificate setup, and first capture |
 | [Concepts](concepts/architecture.md) | Architecture, flows, MCP-first design, and security model |
-| [MCP tools](tools/overview.md) | Complete reference for all eleven MCP tools |
+| [MCP tools](tools/overview.md) | Complete reference for all MCP tools |
 | [Features](features/resender.md) | Detailed guides for resender, fuzzer, macros, intercept, and more |
 | [Protocols](protocols/http.md) | HTTP, HTTPS MITM, HTTP/2, gRPC, WebSocket, Raw TCP, SOCKS5 |
 | [Web UI](webui/overview.md) | Visual dashboard for inspection and interactive testing |

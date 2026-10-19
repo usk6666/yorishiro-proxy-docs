@@ -44,8 +44,10 @@ The proxy includes a custom HPACK implementation (RFC 7541) for header compressi
 
 The decoder enforces safety limits to prevent resource exhaustion:
 
-- Maximum header list size: 64 KB (total decoded header fields per block)
-- Maximum string length: 16 KB (per header name or value)
+- Maximum header list size: 1 MiB (total decoded header fields per block)
+- Maximum string length: 1 MiB (per header name or value)
+
+These limits are above what Chromium (256 KiB) and Firefox (384 KiB) send, so requests with very long `:path` values (20+ KiB ad-tech URLs, for example) are proxied and recorded instead of tearing the connection down.
 
 Both client-to-proxy and proxy-to-upstream connections maintain independent HPACK state, allowing the proxy to fully decode, inspect, and re-encode headers at each hop.
 
@@ -57,6 +59,12 @@ The proxy is conservative about what it advertises so that it does not silently 
 - **`SETTINGS_ENABLE_CONNECT_PROTOCOL`** -- when an upstream advertises this in its SETTINGS, the proxy mirrors the value to clients so RFC 8441 extended `CONNECT` (the WebSocket-over-HTTP/2 bootstrap) keeps working end-to-end.
 - **`SETTINGS_MAX_HEADER_LIST_SIZE`** -- omitted when the value equals the default (the wire saves a `(k,v)` pair and stays bit-for-bit equivalent to a peer that never sent it).
 - **`SETTINGS_MAX_CONCURRENT_STREAMS`** -- defaults to **500** (raised from 100 in USK-862). Override per listener via [`proxy_start.max_concurrent_streams`](../tools/proxy-start.md) or globally via the [config file](../configuration/config-file.md). Range `1..65535`.
+
+The proxy sends its own SETTINGS before it starts reading the peer's frames.
+
+### Upstream fingerprint
+
+On the upstream (client-role) side, the connection preface follows the configured [`tls_fingerprint`](../configuration/tls.md#http2-fingerprint). With the default `firefox`, the proxy sends Firefox's SETTINGS values and order, its connection-level WINDOW_UPDATE increment, and the `:method :path :authority :scheme` pseudo-header order. Other profiles use the default (Chrome-shaped) behavior. The client-facing (server-role) side is unaffected, and recorded raw bytes are never modified.
 
 ### Connection-specific headers stripped on send
 
@@ -93,6 +101,8 @@ DATA frames are aggregated into a reference-counted `BodyBuffer` before each `HT
 
 `WINDOW_UPDATE` frames are emitted at frame arrival, not after the Pipeline has finished processing the envelope. The Layer eagerly emits a `WINDOW_UPDATE` when the stream-level recv window has been consumed by ≥50% of the local `InitialWindowSize`, or when the connection-level recv window has been consumed by ≥50% of the initial 65535. This means an arbitrarily long Pipeline hold (e.g. waiting on intercept review) on one stream does **not** stall sibling streams sharing the same connection.
 
+On the send side, DATA that is blocked by the peer's flow-control window is parked per stream instead of blocking the connection's writer, so one stalled stream does not hold up frames for other streams.
+
 ## Trailer support
 
 HTTP/2 trailers are fully supported. Trailers are sent as a HEADERS frame with the `END_STREAM` flag set, arriving after all DATA frames for a stream. The proxy records trailers in the flow's response message headers.
@@ -128,7 +138,17 @@ RFC 8441 extended `CONNECT` is supported in both directions. When a peer adverti
 
 ## GOAWAY handling
 
-When the upstream emits `GOAWAY` while a stream is held in intercept review, the connector re-dials and replays the held request on a fresh H2 connection so that the operator's release/modify decision is honoured rather than failing the flow.
+Upstream HTTP/2 connections are not bound to a single TCP connection. When the current upstream connection goes stale (the peer sends `GOAWAY` or shuts down), the next stream opens on a freshly dialed connection, transparently to the client:
+
+- **Pre-warm** -- a `GOAWAY` on the current upstream connection (including the first one) wakes a worker that dials a replacement in the background, so the next stream does not wait for a dial.
+- **Refused retry** -- a stream the upstream refuses before any HEADERS were sent is retried once on a new connection.
+- **Held streams** -- when the upstream emits `GOAWAY` while a stream is held in intercept review, the held request is replayed on a fresh connection so that the operator's release/modify decision is honoured rather than failing the flow.
+- **REFUSED_STREAM to the client** -- if the upstream still refuses the stream, the client's stream is reset with `REFUSED_STREAM`, which tells the client it is safe to retry.
+- **TCP forwards** -- `http2` / `grpc` `tcp_forwards` entries redial the same way and keep the first connection's fingerprint.
+
+On the client-facing side, a received `GOAWAY` only affects streams the proxy itself initiated, a stream whose first HEADERS arrives after the proxy sent `GOAWAY` is refused, and closed streams are retired so long-lived connections do not run out of stream slots.
+
+`query` with `resource: "status"` reports upstream redial counters for troubleshooting: `h2_upstream` (`goaway_observed_prewarm`, `goaway_observed_reactive`, `refused`, `redial_prewarm`, `redial_reactive`, `redial_refused_stream`) and `h1_upstream` for the HTTP/1.x equivalent.
 
 ## Stream-level flow recording
 
@@ -142,23 +162,18 @@ A single reader goroutine reads frames sequentially and dispatches them to per-s
 
 ## Request processing pipeline
 
-Each HTTP/2 stream follows this processing pipeline:
+Each HTTP/2 stream's events are folded into `HTTPMessage` envelopes by the HTTPAggregator, and each envelope runs through the same Pipeline as HTTP/1.x:
 
-1. **Read request body** -- the full body is read and buffered
-2. **Resolve scheme and host** -- determines `https` (for h2) or `http` (for h2c) and sets the target host
-3. **Target scope check** -- enforces which destinations are allowed
-4. **Rate limit check** -- enforces per-host rate limits
-5. **Safety filter** -- checks request body and URL against safety rules
-6. **Plugin hooks** -- dispatches `on_receive_from_client`
-7. **Build outbound request** -- creates the upstream request with cleaned headers
-8. **Intercept check** -- pauses for AI agent review if matching rules exist
-9. **Plugin hooks** -- dispatches `on_before_send_to_server`
-10. **Forward upstream** -- sends the request and reads the response
-11. **Response intercept** -- allows modification of the response
-12. **Plugin hooks** -- dispatches response hooks
-13. **Output filter** -- masks sensitive data before sending to client
-14. **Write response** -- sends the response back to the client
-15. **Record flow** -- stores the complete request/response
+1. **HostScope / HTTPScope** -- target scope checks (Send direction)
+2. **Budget** -- diagnostic budget accounting
+3. **Safety** -- Input Filter on the request
+4. **PluginPre** -- `("http", "on_request" / "on_response")` hooks at `pre_pipeline`
+5. **Intercept** -- holds the envelope for review if a rule matches
+6. **Transform** -- auto-transform rules
+7. **PluginPost** -- the same hooks at `post_pipeline`
+8. **Record** -- stores the request/response, including the original and modified variants
+
+The envelope is then re-encoded and sent to the upstream (requests) or client (responses).
 
 ## Differences from HTTP/1.x
 

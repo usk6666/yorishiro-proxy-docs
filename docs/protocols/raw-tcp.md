@@ -149,6 +149,8 @@ Each `Read()` from the underlying connection produces exactly one `RawMessage` e
 
 If the upstream dial fails, the flow is not created and the client connection is closed.
 
+Because the upstream is connected before the relay starts, both directions are read from the beginning. Server-speaks-first protocols — SMTP, FTP, MySQL, IMAP, and POP3 banners, for example — reach the client without the client sending anything first. This applies to the `raw` forward mode, the `auto` mode's raw fallback, and raw relays inside CONNECT / SOCKS5 tunnels (raw-passthrough hosts and unknown ALPN after TLS MITM).
+
 ## Plugin hooks
 
 The bytechunk Layer participates in the standard Pipeline. Plugin authors register hooks via the pluginv2 engine using the `(protocol, event, phase)` triple — for example `(raw, on_chunk, pre)` to observe each `RawMessage` envelope before intercept. See the [Plugin hook reference](../plugins/hook-reference.md) for the full surface.

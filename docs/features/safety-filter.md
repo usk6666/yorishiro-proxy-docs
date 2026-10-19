@@ -41,9 +41,23 @@ When the Input Filter blocks a request at the proxy layer:
 - **Header**: `X-Block-Reason: safety_filter`
 - **Body**: JSON with violation details (rule ID, rule name, match location)
 
+When it blocks a native gRPC call at the proxy layer, the client receives a Trailers-Only response instead of hanging until its deadline:
+
+- **`grpc-status`**: `7` (`PERMISSION_DENIED`)
+- **`grpc-message`**: `blocked by safety_filter`
+- **Trailers**: `server: yorishiro-proxy` and `x-yorishiro-matched-rules`
+
+The upstream stream, if already opened, is closed. gRPC-Web and WebSocket messages are dropped.
+
 When it blocks an MCP tool operation:
 
 - **MCP error response** with violation details
+
+The matched fragment is never written to the log in clear text: the log line carries a truncated SHA-256 digest and the byte length, so a match on an `Authorization` or `Cookie` header does not leak the secret.
+
+### gRPC targets
+
+For a gRPC call, the `url` target covers the `:path` (`/package.Service/Method`) and the `query` target covers any query component, so the built-in presets also fire on the RPC target, not just on message payloads.
 
 ## Output filter
 
@@ -51,8 +65,8 @@ The Output Filter prevents sensitive information (PII) from being exposed to AI 
 
 ### How it works
 
-1. **Proxy layer**: Response body and headers are masked before returning to the client
-2. **MCP tool layer**: Query results, resend responses, fuzz results, intercept queue entries, and export data are masked before returning to the AI agent
+1. **MCP tool layer**: Query results, resend responses, fuzz results, intercept queue entries, and export data are masked before returning to the AI agent
+2. **Wire untouched**: Traffic relayed to the client and the next hop is never modified by the Output Filter
 3. **Raw data preserved**: The Flow Store always contains the original unmasked data for human review via the Web UI
 
 ### Built-in PII presets
@@ -106,9 +120,9 @@ The Input Filter is enforced at every point where the proxy sends data to extern
 | **Proxy data path** | `SafetyStep` runs on every Send-direction envelope, before transform and downstream encode |
 | **resend_http / resend_ws / resend_grpc** | Typed message checked before sending |
 | **resend_raw** | Raw bytes checked before sending |
-| **fuzz_http / fuzz_ws / fuzz_grpc / fuzz_raw** | Template envelope checked at start; each expanded payload checked before sending |
+| **fuzz_http / fuzz_ws / fuzz_grpc / fuzz_raw** | Template envelope checked at start; each expanded payload checked before sending (after the per-variant target scope check) |
 | **macro** | Each step's outbound message checked before sending |
-| **intercept** | `modify_and_forward` envelope re-checked before release (USK-702) |
+| **intercept** | Every release re-checks target scope, then `modify_and_forward` envelopes are re-checked by the Input Filter (USK-702) |
 
 ### Re-check at HoldQueue release
 
@@ -120,7 +134,6 @@ The Output Filter is enforced at every point where data is returned to the AI ag
 
 | Source | Enforcement |
 |--------|-------------|
-| **Proxy responses** | Body and headers masked before returning to client |
 | **query results** | Flow data masked in query output |
 | **resend results** | Response body and headers masked |
 | **fuzz results** | Response data masked |

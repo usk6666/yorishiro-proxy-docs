@@ -30,13 +30,18 @@ The intercept rule engine dispatches via type-switch on the held envelope's `Mes
 
 Forward the held envelope as-is.
 
+!!! note "Scope is re-checked at release"
+    For `release`, `modify_and_forward`, and timeout auto-release, [target scope](security.md#where-target-scope-applies) is checked again with the rules in force at release time, against the request actually forwarded (for `modify_and_forward`, the modified one). If a deny was added while the item was held, or a rewrite moves `authority` / `path` into a denied target, the `intercept` call still succeeds but the item is blocked: an HTTP request gets `403 Forbidden` with `blocked_by: target_scope`, and a WebSocket / gRPC message is dropped. The block is recorded as a flow with `blocked_by: target_scope`.
+
+    A hold that ends without any `intercept` action because the connection or proxy went away (for example `proxy_stop`) is recorded with `blocked_by: intercept_cancelled`.
+
 ### modify_and_forward
 
 Apply a typed modify payload (matching the held envelope's `Message` type) and forward the result. The typed modify schemas are described below. With `mode="raw"` plus `raw_override_base64`, the proxy builds a synthetic `RawMessage` envelope from the supplied bytes and forwards them verbatim regardless of the original protocol.
 
 ### drop
 
-Discard the held envelope and unblock the pipeline.
+Discard the held envelope and unblock the pipeline. An HTTP client receives `403 Forbidden` (`blocked_by: intercept_drop`), and a WebSocket frame is discarded. Dropping a native gRPC request item (start or a client message) ends the RPC with `grpc-status: 7` (`PERMISSION_DENIED`) and `grpc-message: blocked by intercept_drop`.
 
 ## Typed modify payloads
 

@@ -10,8 +10,8 @@ When connecting to upstream HTTPS servers, yorishiro-proxy uses [uTLS](https://g
 
 | Profile | Description |
 |---------|-------------|
-| `chrome` | Mimics Google Chrome's TLS fingerprint (default for `proxy_start`) |
-| `firefox` | Mimics Mozilla Firefox's TLS fingerprint |
+| `firefox` | Mimics Mozilla Firefox's TLS fingerprint (**default**) |
+| `chrome` | Mimics Google Chrome's TLS fingerprint |
 | `safari` | Mimics Apple Safari's TLS fingerprint |
 | `edge` | Mimics Microsoft Edge's TLS fingerprint |
 | `random` | Randomly selects a profile for each connection |
@@ -48,7 +48,36 @@ YP_TLS_FINGERPRINT=firefox yorishiro-proxy
 }
 ```
 
-The fingerprint is **runtime-mutable**: subsequent outbound dials use the new profile, while connections already pinned to a pooled upstream Layer retain the fingerprint they were established with. When no profile is explicitly set via CLI flag or environment variable, `proxy_start` defaults to `chrome`.
+The fingerprint is **runtime-mutable**: subsequent outbound dials use the new profile, while connections already pinned to a pooled upstream Layer retain the fingerprint they were established with.
+
+When nothing is configured, the profile resolves to `firefox` on every path — live MITM traffic, resend, and fuzz. Set `none` to opt out of spoofing entirely. Values are case-insensitive, and an unknown value (for example a typo like `firefx`) is rejected at config load, at the `-tls-fingerprint` flag, and by the `proxy_start` / `configure` tools, instead of silently falling back to a Go-native ClientHello.
+
+### HTTP/2 fingerprint
+
+Anti-bot frontends also fingerprint a client's HTTP/2 behavior. With `firefox` selected, the upstream HTTP/2 connection preface matches Firefox as well:
+
+| Element | Firefox shape |
+|---------|---------------|
+| SETTINGS (wire order) | `HEADER_TABLE_SIZE=65536`, `ENABLE_PUSH=0`, `INITIAL_WINDOW_SIZE=131072`, `MAX_FRAME_SIZE=16384` |
+| Connection WINDOW_UPDATE | `12517377` |
+| Request pseudo-header order | `:method :path :authority :scheme` |
+
+This corresponds to the Akamai H2 fingerprint `1:65536;2:0;4:131072;5:16384|12517377|0|m,p,a,s`. There is no separate setting — the H2 shape follows `tls_fingerprint`.
+
+!!! note "Limitations"
+    - Only `firefox` has a dedicated H2 profile. `chrome`, `edge`, `safari`, `random`, and `none` use the default (Chrome-shaped) H2 behavior.
+    - Firefox's PRIORITY frame tree is not reproduced.
+    - Both the TLS ClientHello and the H2 shape are pinned to **Firefox 120**, the newest Firefox profile uTLS ships. An anti-detect browser advertising a newer Firefox user agent shows a small version skew, but the fingerprint is still a genuine Firefox fingerprint.
+    - HTTP/3 / QUIC is out of scope: the proxy advertises only `h2` and `http/1.1` via ALPN.
+
+### Client fingerprint capture (JA3 / JA4)
+
+On the MITM path, yorishiro-proxy also computes the JA3 and JA4 fingerprints of the **client's** ClientHello (your browser or tool). They are recorded with the stream and surface as:
+
+- `tls_client_ja3` / `tls_client_ja4` in the `conn_info` of a [`query`](../tools/query.md) flow result
+- `ja3` / `ja4` keys on `ctx.tls` and in the `tls.on_handshake` hook data for [plugins](../plugins/data-map-reference.md)
+
+This is capture only: the client's fingerprint is not mirrored to the upstream dial (the upstream uses `tls_fingerprint`). ClientHellos larger than 4 KiB are not fingerprinted. Passthrough connections are fingerprinted too, and the values appear on the TLS handshake audit flow.
 
 ## TLS passthrough
 
@@ -256,7 +285,7 @@ A comprehensive `host_tls` configuration combining mTLS, verification control, a
 
 ```json
 {
-  "tls_fingerprint": "chrome",
+  "tls_fingerprint": "firefox",
   "tls_passthrough": ["*.google.com"],
   "client_cert": "/path/to/default-client.crt",
   "client_key": "/path/to/default-client.key",

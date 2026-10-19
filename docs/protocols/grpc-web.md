@@ -45,7 +45,7 @@ On the response side, gRPC-Web encodes the trailer block as a final LPM frame wh
 3. Decodes its text payload as `name: value\r\n` lines
 4. Emits a `GRPCEndMessage` envelope with parsed `Status`, `Message`, `StatusDetails`, and any remaining `Trailers`
 
-On the request side, gRPC-Web bodies must **not** carry an embedded trailer frame; the trailer is a response-side artifact only. If the Layer observes one on a Send-direction body it stamps the `AnomalyUnexpectedGRPCWebRequestTrailer` anomaly on the resulting `GRPCEndMessage` so the malformed bytes remain visible.
+On the request side, gRPC-Web bodies must **not** carry an embedded trailer frame; the trailer is a response-side artifact only. If the Layer observes one on a Send-direction body it stamps the `AnomalyUnexpectedGRPCWebRequestTrailer` anomaly on the resulting `GRPCEndMessage` so the malformed bytes remain visible, and forwards the trailer frame upstream rather than dropping it.
 
 ## Anomalies
 
@@ -58,6 +58,12 @@ The Layer records observability signals for recoverable wire-format deviations w
 | `MalformedGRPCWebTrailer` | The embedded trailer frame's text payload could not be parsed as `name: value\r\n` lines. |
 | `MissingGRPCWebTrailer` | A Receive-direction body parsed cleanly but had no terminating trailer LPM frame. The Layer synthesizes a `GRPCEndMessage` with `Status=0` and an empty `Raw` slice (so it is distinguishable from a wire-observed End) and stamps this anomaly on it. |
 | `UnexpectedGRPCWebRequestTrailer` | A Send-direction (request) body contained an embedded trailer LPM frame. |
+
+Anomalous bodies are still forwarded. A body whose LPM framing cannot be parsed is recorded and then relayed verbatim to the other side, so the peer sees exactly what was sent instead of waiting for a timeout. A response missing its trailer frame is not given a fabricated `grpc-status: 0` trailer on the client wire.
+
+### Body framing headers
+
+When the Layer re-assembles a body from LPM frames (for example after a transform resized a message), it reconciles the framing headers: a mismatching `Content-Length` is rewritten in place (keeping its casing and position), and `Transfer-Encoding` is dropped in favor of `Content-Length`. This prevents a stale length or a `Transfer-Encoding` + `Content-Length` combination from desynchronizing the next hop.
 
 Stream-terminating problems (oversize LPM, gzip-bomb cap, unsupported encoding) continue to surface as `*layer.StreamError` instead of these anomalies — they are termination contracts, not parser deviations.
 

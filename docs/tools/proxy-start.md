@@ -13,7 +13,7 @@ Start a proxy listener with optional configuration. The proxy listens on the spe
 |-----------|------|----------|---------|-------------|
 | `name` | string | No | `"default"` | Listener name for multi-listener support |
 | `listen_addr` | string | No | `"127.0.0.1:8080"` | TCP address to listen on (loopback only) |
-| `upstream_proxy` | string | No | direct | Upstream proxy URL (`http://host:port` or `socks5://host:port`) |
+| `upstream_proxy` | string \| object | No | direct | Upstream proxy URL (`http://host:port` or `socks5://host:port`), or a rotation object. See [upstream_proxy](#upstream_proxy) |
 | `capture_scope` | object | No | capture all | Controls which requests are recorded |
 | `tls_passthrough` | string[] | No | `[]` | Domain patterns that bypass TLS interception |
 | `intercept_rules` | array | No | `[]` | Rules for intercepting requests/responses |
@@ -22,13 +22,36 @@ Start a proxy listener with optional configuration. The proxy listens on the spe
 | `socks5_auth` | string | No | `"none"` | SOCKS5 authentication method (`none` or `password`) |
 | `socks5_username` | string | No | | Username for SOCKS5 password auth |
 | `socks5_password` | string | No | | Password for SOCKS5 password auth |
-| `tls_fingerprint` | string | No | `"chrome"` | TLS ClientHello fingerprint profile |
+| `tls_fingerprint` | string | No | `"firefox"` | TLS ClientHello fingerprint profile |
 | `client_cert` | string | No | | PEM client certificate path for mTLS |
 | `client_key` | string | No | | PEM client private key path for mTLS |
-| `max_connections` | integer | No | `128` | Maximum concurrent connections (1--100000) |
+| `max_connections` | integer | No | `512` | Maximum concurrent connections (1--100000) |
 | `max_concurrent_streams` | integer | No | `500` | HTTP/2 `SETTINGS_MAX_CONCURRENT_STREAMS` advertised to clients (1--65535) |
 | `peek_timeout_ms` | integer | No | `30000` | Protocol detection timeout in ms (100--600000) |
-| `request_timeout_ms` | integer | No | `60000` | HTTP request header read timeout in ms (100--600000) |
+| `request_timeout_ms` | integer | No | `60000` | Request-head timeout in ms: HTTP/1.x request line + headers, `CONNECT` request, client TLS handshake (100--600000) |
+
+### upstream_proxy
+
+Routes all outgoing traffic for this listener through an upstream proxy. It takes precedence over the `HTTP_PROXY` / `HTTPS_PROXY` environment variables. Two shapes are accepted.
+
+**String form** -- a literal proxy URL. `http://host:port` uses HTTP CONNECT, and `socks5://host:port` uses SOCKS5. Add credentials with `http://user:pass@host:port` (Basic) or `socks5://user:pass@host:port`.
+
+**Object form** -- enables per-listener rotation for the live MITM data path:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | string | Literal proxy URL (same as the string form). Mutually exclusive with `url_template` |
+| `url_template` | string | Proxy URL template using `§var§` syntax. `§__nonce§` expands to a fresh UUID per resolution event, and `§__iteration§` to an index |
+| `rotation.policy` | string | Required with `url_template`: `per_request`, `per_connection`, `per_target_host`, or `sticky` |
+
+| Policy | When the template is re-expanded |
+|--------|----------------------------------|
+| `per_request` | Every outbound TCP dial. For HTTP/2, the dial is the rotation event, not each stream |
+| `per_connection` | Once per inbound client connection; all upstream dials from that client share the URL |
+| `per_target_host` | Once per target host (cached with a TTL); different hosts get different URLs |
+| `sticky` | Once for the listener's lifetime. Calling `configure` or `proxy_start` again clears it |
+
+The template is probe-expanded when you call the tool, so a malformed template, a disallowed scheme, or CRLF in the expanded URL fails the call instead of the first live dial. Each listener owns its own resolver, so rotation state never leaks between listeners. The `query` `status` resource reports the active rotation per listener in `listeners[]` as `upstream_proxy_template` (credentials redacted) and `upstream_proxy_rotation_policy`.
 
 ### capture_scope
 
@@ -42,7 +65,7 @@ Each scope rule has:
 | Field | Type | Description |
 |-------|------|-------------|
 | `hostname` | string | Hostname pattern (exact or `*.example.com` wildcard) |
-| `url_prefix` | string | URL path prefix (e.g. `"/api/"`) |
+| `url_prefix` | string | URL path prefix (e.g. `"/api/"`), compared byte-exact against the wire-form path (percent-encoding not decoded, query excluded) |
 | `method` | string | HTTP method (e.g. `"GET"`, `"POST"`) |
 
 At least one field must be set per rule.
@@ -63,7 +86,7 @@ Conditions:
 | Field | Type | Description |
 |-------|------|-------------|
 | `host_pattern` | string | Regex for hostname matching (port excluded) |
-| `path_pattern` | string | Regex for URL path matching |
+| `path_pattern` | string | Regex for URL path matching. Matched against the wire-form path (percent-encoding not decoded, query string excluded) on HTTP/1.x and HTTP/2 |
 | `methods` | string[] | HTTP method whitelist (case-insensitive) |
 | `header_match` | object | Maps header names to regex patterns (AND logic) |
 
@@ -101,6 +124,9 @@ Maps local listen ports to upstream forwarding configurations. Each entry maps a
 | `"websocket"` | Operator-declared expectation that the request initiates an RFC 6455 Upgrade |
 | `"sse"` | Operator-declared expectation that the upstream returns a `text/event-stream` response (USK-913) |
 
+!!! tip "Server-speaks-first protocols"
+    For targets where the server sends first (SMTP, FTP, MySQL, IMAP, POP3), use `"raw"`. With `"auto"`, the proxy waits up to 5 seconds for the client's first bytes before falling back to raw, which delays the server's greeting.
+
 **TLS modes (`tls` × `upstream_tls` matrix):**
 
 `tls` and `upstream_tls` are independent: `tls` controls the client-direction handshake on the listen port; `upstream_tls` controls the upstream-direction handshake to `target`. The four combinations cover the realistic deployment shapes:
@@ -126,12 +152,19 @@ Both formats can be mixed in the same `tcp_forwards` object.
 
 | Value | Description |
 |-------|-------------|
-| `"chrome"` | Mimic Chrome browser TLS fingerprint (default) |
-| `"firefox"` | Mimic Firefox browser TLS fingerprint |
+| `"firefox"` | Mimic Firefox browser TLS fingerprint (default) |
+| `"chrome"` | Mimic Chrome browser TLS fingerprint |
 | `"safari"` | Mimic Safari browser TLS fingerprint |
 | `"edge"` | Mimic Edge browser TLS fingerprint |
 | `"random"` | Random browser fingerprint per connection |
 | `"none"` | Standard Go crypto/tls (no fingerprint mimicry) |
+
+With `"firefox"` (the default), the upstream HTTP/2 send-shape -- SETTINGS values and order, the connection-level WINDOW_UPDATE, and pseudo-header order -- is also shaped like Firefox, so the TLS and HTTP/2 fingerprints stay coherent. Both are pinned to Firefox 120, the newest profile the TLS library provides. Other profiles keep the default HTTP/2 send-shape. See [TLS configuration](../configuration/tls.md).
+
+### Connection limits and timeouts
+
+- **`max_connections`** -- connections refused at the cap are reported in the `query` `status` resource under `connection_rejections`, and recorded as flows with `blocked_by: "capacity"`.
+- **`request_timeout_ms`** -- covers each HTTP/1.x request line and header section (measured from the request's first byte, on every keep-alive request), the `CONNECT` request, and the client-side TLS MITM handshake. The request body is not covered. A client that misses the deadline is disconnected without a response; for an HTTP/1.x request head, the event is recorded as an error flow with `failure_reason: "request_head_timeout"`. Idle client keep-alive connections are closed after 120 seconds (or `request_timeout_ms`, if longer).
 
 ## Response
 
@@ -321,6 +354,19 @@ See [`configure`](configure.md) for the full merge / replace surface (add, remov
 }
 ```
 
+### Start with a rotating upstream proxy
+
+```json
+// proxy_start
+{
+  "listen_addr": "127.0.0.1:8080",
+  "upstream_proxy": {
+    "url_template": "http://session-§__nonce§:pass@residential.example:8080",
+    "rotation": {"policy": "per_target_host"}
+  }
+}
+```
+
 ### Start with SOCKS5 password authentication
 
 ```json
@@ -365,5 +411,6 @@ See [`configure`](configure.md) for the full merge / replace surface (add, remov
 
 - [proxy_stop](proxy-stop.md) -- Stop the proxy
 - [configure](configure.md) -- Modify settings at runtime
+- [Upstream proxy](../configuration/upstream-proxy.md) -- Proxy chaining and rotation
 - [Quick setup](../getting-started/quick-setup.md) -- Getting started guide
 - [Architecture](../concepts/architecture.md) -- System design

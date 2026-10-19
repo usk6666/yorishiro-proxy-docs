@@ -32,14 +32,14 @@ Click the **Filters** button in the toolbar to reveal the filter panel. You can 
 - **Flow state** -- Dropdown for active, complete, or error
 - **Scheme** -- Dropdown for `https`, `http`, `wss`, `ws`, `tcp`
 - **Host** -- Text input to filter by target hostname (debounced)
-- **Blocked by** -- Dropdown for `target_scope`, `intercept_drop`, `rate_limit`, `safety_filter`
+- **Blocked by** -- Dropdown for `target_scope`, `intercept_drop`, `intercept_cancelled`, `rate_limit`, `safety_filter`, `budget`, `capacity`
 - **URL pattern** -- Text input with debounced search (300ms delay)
 - **Body contains** -- Text search within response bodies
 - **Tag** -- Filter by flow tag
 
 The query API also supports `technology` and `conn_id` filters, which can be used via the MCP `query` tool.
 
-Filters are applied in combination. When any text filter changes, the pagination resets to page 1 automatically.
+Filters are applied in combination. When any filter changes -- dropdowns and radio buttons as well as text inputs -- the pagination resets to page 1 and the selection is cleared.
 
 ## Auto-refresh
 
@@ -72,7 +72,11 @@ Clicking a flow row navigates to the detail page (`/flows/{id}`), which shows th
 - **Response body** -- With content-type-aware rendering
 - **Connection info** -- TLS version, server address, timing data
 
-For HTTP/2 and gRPC flows, the detail view also shows pseudo-headers (`:method`, `:path`, `:authority`, `:scheme`) and stream information.
+For HTTP/2 and gRPC flows, the detail view shows pseudo-headers (`:method`, `:path`, `:authority`, `:scheme`, `:status`) in a separate HTTP/2 info section, and the regular headers table lists only non-pseudo headers. When a message carries only pseudo-headers, the regular headers table is empty rather than repeating them.
+
+When a request or message body was truncated (at capture time, or by the `body_max_bytes` cap on the query), the body viewer shows a truncation notice instead of presenting the partial body as complete.
+
+A flow blocked with `blocked_by: "intercept_cancelled"` shows an explanation that the request was held by an intercept rule and the connection or proxy went away before it was released or dropped.
 
 ### Raw tab
 
@@ -117,20 +121,22 @@ From the detail view, you can:
 
 - **Copy as cURL** -- Generate a cURL command that reproduces the request
 - **Export HAR** -- Download the flow as a single-entry HAR file
+
+Both exports drop HTTP/2 pseudo-headers (`:method`, `:path`, `:authority`, `:scheme`, `:status`, matched case-insensitively) from the header list. The method, URL, and status come from the flow's top-level fields instead, and HAR entries for HTTP/2 flows report `httpVersion: "h2"`.
 - **Resend** -- Navigate to the Resender page with the flow pre-loaded
 
 ## Exporting flows
 
 The toolbar provides two export options:
 
-- **Export JSONL** -- Exports all flows (server-side) as a JSONL file via the `manage` tool with `export_flows` action
+- **Export JSONL** -- Exports all flows (server-side) as JSONL via the `manage` tool with `export_flows` action
 - **Export HAR** -- Downloads selected flows (or all visible flows if none selected) as a HAR file directly in the browser
 
 ## Importing flows
 
-Click **Import** to open the import dialog. You can import flows from a JSONL file stored on the server:
+Click **Import** to open the import dialog. You can import flows from a JSONL file stored in the server's export directory:
 
-1. Enter the server-side file path (e.g., `/path/to/flows.jsonl`)
+1. Enter the file path relative to the server's export directory (e.g., `flows.jsonl`). The export directory is set at server start with `-export-dir` / `YP_EXPORT_DIR` (default `~/.yorishiro-proxy/exports/`); paths that resolve outside it are rejected
 2. Choose a conflict policy:
     - **Skip** -- Keep existing flows when IDs conflict
     - **Replace** -- Overwrite existing flows

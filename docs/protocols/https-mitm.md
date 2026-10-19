@@ -17,11 +17,16 @@ The HTTPS interception follows the standard HTTP CONNECT proxy protocol:
 1. Client ──CONNECT example.com:443──> connector
 2. connector validates target scope and rate limits
 3. connector ──200 Connection Established──> Client
-4. Client ──TLS ClientHello──> tlslayer.Server (MITM cert presentation)
-5. connector dials upstream and runs tlslayer.Client toward example.com:443
-6. ALPN negotiation chooses the inner Layer (http1 / http2 / bytechunk)
-7. Inner traffic flows through the chosen Layer + standard Pipeline
+4. connector peeks the client's ClientHello (SNI, ALPN offer, JA3/JA4) without consuming it
+5. connector dials upstream and runs tlslayer.Client toward example.com:443,
+   offering the client's ALPN list verbatim
+6. tlslayer.Server completes the client handshake (MITM cert presentation),
+   advertising only the protocol the upstream selected
+7. ALPN routing chooses the inner Layer (http1 / http2 / bytechunk)
+8. Inner traffic flows through the chosen Layer + standard Pipeline
 ```
+
+The CONNECT request and the client-side TLS handshake are both bounded by `request_timeout_ms`, so a client that stalls mid-handshake cannot hold a connection slot indefinitely.
 
 `tlslayer.Server` and `tlslayer.Client` each return a `*envelope.TLSSnapshot` capturing the negotiated TLS parameters (SNI, ALPN, peer certificate, cipher suite, version). Both snapshots are attached to envelopes produced by the inner Layer.
 
@@ -66,7 +71,15 @@ For detailed CA installation instructions, see [CA certificate](../getting-start
 
 ## ALPN negotiation
 
-The proxy advertises both `h2` and `http/1.1` to the upstream during the TLS handshake (or only the cached ALPN, if the upstream's preference has been observed before). The client-facing handshake uses the same ALPN to ensure end-to-end consistency. ALPN routing then picks the inner Layer:
+The proxy uses a **sniff-first** flow so that ALPN on both legs reflects what the upstream actually chose, rather than a guess:
+
+1. The client's ClientHello is peeked before the MITM handshake.
+2. The client's ALPN offer list is forwarded to the upstream byte-for-byte — same order, no deduplication, no case folding.
+3. The upstream's selected protocol is advertised back to the client as a single-element ALPN list (or omitted if the upstream selected none), so the client necessarily agrees.
+
+This keeps the end-to-end protocol faithful even when an upstream violates RFC 7301 (for example by answering `http/1.1` to an `h2`-only offer). If the peek fails — timeout, non-TLS bytes, ECH, or a ClientHello larger than 4 KiB — the proxy falls back to offering `h2` and `http/1.1` and redialing as needed.
+
+ALPN routing then picks the inner Layer:
 
 - `http/1.1` (or empty ALPN) — the inner Layer is `internal/layer/http1/`
 - `h2` — the inner Layer is `internal/layer/http2/` (see [HTTP/2](http2.md))
@@ -82,7 +95,7 @@ For hosts that should not be intercepted (e.g., certificate-pinned services, out
 Client ──encrypted bytes──> Proxy ──encrypted bytes──> Upstream
 ```
 
-No certificate is issued, no traffic is decrypted, and no flow is recorded for passthrough connections.
+No certificate is issued and no traffic is decrypted. The SNI and the client's JA3/JA4 fingerprints are still observed from the ClientHello (without delaying the handshake) for the TLS handshake audit record.
 
 Configure passthrough via the `configure` tool:
 
@@ -95,19 +108,21 @@ Configure passthrough via the `configure` tool:
 
 ## TLS fingerprint spoofing
 
-By default, the proxy uses a configurable TLS fingerprint profile (default: `chrome`) for upstream connections. This prevents upstream servers from detecting the proxy based on the TLS ClientHello fingerprint.
+By default, the proxy uses a configurable TLS fingerprint profile (default: `firefox`) for upstream connections. This prevents upstream servers from detecting the proxy based on the TLS ClientHello fingerprint. With `firefox`, the upstream HTTP/2 SETTINGS, WINDOW_UPDATE, and pseudo-header order match Firefox too.
 
-Available profiles: `chrome`, `firefox`, `safari`, `edge`, `random`, `none`.
+Available profiles: `firefox`, `chrome`, `safari`, `edge`, `random`, `none`.
 
-The fingerprint applies to all outgoing TLS connections, including those established through CONNECT tunnels and WebSocket upgrades.
+The fingerprint applies to all outgoing TLS connections, including those established through CONNECT tunnels and WebSocket upgrades. See [TLS fingerprinting](../configuration/tls.md#tls-fingerprinting) for details.
+
+Independently, the proxy records the JA3 / JA4 fingerprint of the **client's** ClientHello as `tls_client_ja3` / `tls_client_ja4` on the flow's connection info.
 
 ## HTTPS request processing
 
 Once the MITM tunnel is established, traffic flows through the chosen inner Layer's Channel and the standard Pipeline. For `http1`-routed CONNECT tunnels the request loop matches the plaintext [HTTP/1.x](http.md) flow exactly; for `h2`-routed tunnels see the [HTTP/2 page](http2.md) for stream-level details.
 
-The Pipeline canonical 8-step chain runs on every Envelope:
+The canonical Pipeline chain runs on every Envelope:
 
-`HostScope → HTTPScope → Safety → PluginPre → Intercept → Transform → Macro → PluginPost → Record`
+`HostScope → HTTPScope → Budget → Safety → PluginPre → Intercept → Transform → PluginPost → Record`
 
 ### Flow recording
 
@@ -131,11 +146,11 @@ Before USK-858 the proxy misclassified `unknown_certificate` / `bad_certificate`
 
 ## Plugin hooks
 
-The `on_tls_handshake` lifecycle hook fires after each successful TLS handshake, providing:
+The `("tls", "on_handshake")` lifecycle hook fires after each successful TLS handshake, providing:
 
 - Server name (SNI)
-- TLS version, cipher suite, ALPN protocol
-- Client address
+- TLS version, cipher suite, ALPN protocol, peer certificate subject
+- The client's JA3 / JA4 fingerprints (`ja3`, `ja4`)
 
 This hook is observe-only (fail-open) and cannot block the connection.
 

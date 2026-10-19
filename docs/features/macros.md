@@ -66,9 +66,9 @@ Each step specifies a recorded flow as a template and optional mutations:
 |-------|------|-------------|
 | `id` | string | Unique step identifier (required) |
 | `flow_id` | string | Recorded flow to use as template (required) |
-| `override_method` | string | Override HTTP method |
+| `override_method` | string | Override HTTP method (supports `§variable§` templates) |
 | `override_url` | string | Override request URL (supports `§variable§` templates) |
-| `override_headers` | object | Header overrides (supports templates) |
+| `override_headers` | object | Header overrides (templates in values only; names match case-sensitively) |
 | `override_body` | string | Override request body (supports templates) |
 | `on_error` | string | Error handling: `"abort"` (default), `"skip"`, `"retry"` |
 | `retry_count` | integer | Retry count when on_error is `"retry"` (default: 3) |
@@ -153,7 +153,7 @@ Extraction rules pull values from responses and store them in the KV Store for u
 
 ## Template expansion
 
-Use `§variable§` syntax in `override_url`, `override_headers`, and `override_body` to reference KV Store values:
+Use `§variable§` syntax in `override_method`, `override_url`, `override_headers` (values), and `override_body` to reference KV Store values. These four fields are the only expansion sites -- `extract` and `when` are never expanded:
 
 ```json
 {
@@ -170,9 +170,19 @@ Use `§variable§` syntax in `override_url`, `override_headers`, and `override_b
 
 Variables are expanded at execution time, after any preceding step's extractions have populated the KV Store.
 
+Values can be piped through encoders: `§payload | url_encode§`, `§credentials | base64§`. Available encoders are `url_encode`, `base64`, `base64_decode`, `hex`, `html_encode`, `lower`, `upper`, `md5`, and `sha256`. An unknown encoder fails the step.
+
+!!! tip "Header names on HTTP/2 flows"
+    An `override_headers` key replaces a recorded header only on a case-sensitive name match. HTTP/2 flows record lowercase header names, so write `cookie` instead of `Cookie` when the step's `flow_id` was captured over HTTP/2.
+
 ### Unresolved variable warnings
 
-If a `§variable§` reference remains in the rendered request after substitution -- typically because the variable was never extracted or `initial_vars` did not provide it -- the macro engine surfaces a non-fatal warning on the step result rather than silently sending the literal `{{var}}` string upstream (#838). Inspect `step_results[*].warnings` to find unresolved templates and either define the variable in `initial_vars` or fix the upstream extract that was supposed to populate it.
+An unknown `§variable§` is left literally on the wire, but yorishiro-proxy reports it instead of sending it silently:
+
+- **At definition time** -- `define_macro` returns `warnings[]` for every `§name§` that is defined by neither `initial_vars`, a preceding step's `extract`, nor a reserved `__` key. The macro is still saved; ignore the warning if you plan to supply the value through `run_macro` `vars`.
+- **At run time** -- `run_macro` re-checks each step against the live KV Store just before sending. An unresolved name sets the step's `status` to `"warning"`, and `step_results[*].warnings` names the location plus the variable names that are available, which makes typos easy to spot.
+
+Foreign syntaxes such as `{{var}}`, `${var}`, and `%var%` are never expanded. They are sent literally (so template-injection payloads pass through unmodified) and also produce a step warning that suggests the `§var§` rewrite.
 
 ## Guards (conditional execution)
 
@@ -240,62 +250,67 @@ The result includes:
 - `status` -- `"completed"`, `"error"`, or `"timeout"`
 - `steps_executed` -- number of steps that ran
 - `kv_store` -- final KV Store contents
-- `step_results` -- per-step status codes, durations, and errors
+- `step_results` -- per-step status (`completed`, `warning`, `skipped`, `error`), status codes, durations, errors, and warnings
 
 ## Hook integration
 
-Macros power the hook system used by [Resender](resender.md) and [Fuzzer](fuzzer.md). Hooks execute macros at specific points during resend or fuzz operations.
-
-### Pre-send hooks
-
-Execute a macro before sending the main request. The macro's KV Store values are used for template expansion in the main request parameters:
+Macros power the `pre_macro` / `post_macro` hooks on the typed fuzz tools ([`fuzz_http`](../tools/fuzz-http.md#macro-hooks), [`fuzz_ws`](../tools/fuzz-ws.md#macro-hooks), [`fuzz_grpc`](../tools/fuzz-grpc.md#macro-hooks), [`fuzz_raw`](../tools/fuzz-raw.md#macro-hooks)). A hook references a stored macro by name and shares its KV Store with the fuzz variants.
 
 ```json
+// fuzz_http
 {
-  "hooks": {
-    "pre_send": {
-      "macro": "refresh-auth",
-      "run_interval": "always"
-    }
+  "flow_id": "target-flow",
+  "headers": [
+    {"name": "Cookie", "value": "PHPSESSID=§session_cookie§"}
+  ],
+  "positions": [
+    {"path": "raw_query", "payloads": ["id=1", "id=2", "id=3"]}
+  ],
+  "pre_macro": {"name": "auth-flow", "scope": "job"},
+  "post_macro": {
+    "name": "log-response",
+    "run_interval": "on_status",
+    "status_codes": [401, 403]
   }
 }
 ```
 
-**Run intervals for pre_send:**
+### Scopes
+
+| Scope | Fires | KV Store |
+|-------|-------|----------|
+| `iteration` (default) | Around every variant | Fresh per variant |
+| `job` | Once before (pre) or after (post) the variant loop | Shared by every variant |
+
+Job-scope extracts are copied into each variant's KV Store, so a single login can feed every variant.
+
+### Run intervals
+
+`run_interval` applies to `scope="iteration"` hooks only (combining it with `scope="job"` is rejected).
+
+**`pre_macro`:**
 
 | Interval | Description |
 |----------|-------------|
-| `always` | Run before every request (default) |
-| `once` | Run only before the first request |
-| `every_n` | Run every N requests (requires `n` parameter) |
-| `on_error` | Run when the previous request had an error (4xx/5xx) |
+| `always` | Run before every variant (default) |
+| `once` | Run only before the first variant |
+| `every_n` | Run every N variants (requires `n`) |
+| `on_error` | Run when the previous variant failed (transport error or HTTP status >= 400 on `fuzz_http`; see each tool for its own error rule) |
 
-### Post-receive hooks
-
-Execute a macro after receiving the main response:
-
-```json
-{
-  "hooks": {
-    "post_receive": {
-      "macro": "log-response",
-      "run_interval": "on_status",
-      "status_codes": [401, 403],
-      "pass_response": true
-    }
-  }
-}
-```
-
-When `pass_response` is `true`, the macro receives `__response_status` and `__response_body` as variables.
-
-**Run intervals for post_receive:**
+**`post_macro`:**
 
 | Interval | Description |
 |----------|-------------|
-| `always` | Run after every response (default) |
+| `always` | Run after every variant (default) |
 | `on_status` | Run when the response status matches `status_codes` |
-| `on_match` | Run when the response body matches `match_pattern` regex |
+| `on_match` | Run when the response matches the `match_pattern` regex |
+
+An iteration-scope `post_macro` receives the variant's response as reserved `__response_*` variables (for `fuzz_http`: `__response_status`, `__response_body`, `__response_headers__<lower(name)>__`). The key set differs per protocol -- see each fuzz tool's page.
+
+### Error handling and overrides
+
+- `on_error`: `skip` (default) skips the variant -- or the whole job for a job-scope `pre_macro` -- when the hook fails; `abort` stops the run; `continue` proceeds anyway.
+- `vars`: static string-to-string overrides injected into the hook's KV Store. Keys starting with `__` are reserved and silently dropped.
 
 ## Retry policy
 
@@ -404,5 +419,5 @@ This example demonstrates a complete authentication flow:
 ## Related pages
 
 - [Macro tool reference](../tools/macro.md) -- MCP tool parameter reference
-- [Resender](resender.md) -- Hook integration for single resends
-- [Fuzzer](fuzzer.md) -- Hook integration for fuzz campaigns
+- [Fuzzer](fuzzer.md) -- `pre_macro` / `post_macro` hooks for fuzz campaigns
+- [Resender](resender.md) -- Single request resend

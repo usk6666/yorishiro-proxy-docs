@@ -32,9 +32,11 @@ flowchart TD
     style D fill:#7b1fa2,color:#fff
 ```
 
-### Policy Layer (human-controlled, immutable)
+### Policy Layer (human-controlled, agent-immutable)
 
-The Policy Layer is set by a human operator at startup through the configuration file or dedicated policy file. Once loaded, it **cannot be modified at runtime** -- not by MCP tools, not by the Web UI, not by any agent. It defines the absolute boundaries of what the proxy is allowed to do.
+The Policy Layer is set by a human operator through the configuration file or dedicated policy file. It **cannot be modified by MCP tools, the Web UI, or any agent**. It defines the absolute boundaries of what the proxy is allowed to do.
+
+The operator can replace it at runtime by editing the source file and sending `SIGHUP` to the server process. Sending a signal requires being the process owner, which the agent reaching the MCP server is not, so this stays an operator-only path. The new file is validated exactly like a boot; an invalid file is rejected and the running policy is kept. See [Signals](../configuration/cli-flags.md#signals).
 
 Policy Layer settings include:
 
@@ -74,13 +76,21 @@ Scope evaluation runs on every traffic path that exits the proxy, not just on ag
 
 This unified enforcement is the load-bearing reason `set_target_scope` is meaningful as an agent self-restriction.
 
+### Scope changes take effect immediately
+
+A scope change — a `SIGHUP` policy reload or an agent `security` call — is re-applied to work that was already admitted:
+
+- **Live connections** -- CONNECT tunnels, SOCKS5 tunnels, and plain-HTTP forward connections that the new scope denies are closed. A connection survives only if an identical new connection would be admitted now. A connection with an intercept hold in flight is cut only after the hold resolves and its result is recorded.
+- **Intercept releases** -- every release (manual, timeout auto-release, and `modify_and_forward`) re-runs the scope check against the envelope about to be forwarded. A target rewritten to a denied host, or a scope narrowed during the hold, is blocked with `403` and `blocked_by: target_scope`.
+- **Fuzz variants** -- `fuzz_http`, `fuzz_ws`, `fuzz_grpc`, and `fuzz_raw` re-check the scope for every variant, on the mutated message. A denied variant is recorded as an error row and the run continues.
+
 ### Applicability scopes (Agent vs Policy Layer)
 
 Three security primitives -- `target_scope`, `rate_limit`, `budget` -- have explicit applicability rules that determine which layer's value applies at which point in the request lifecycle (USK-842):
 
 | Primitive | Policy Layer | Agent Layer |
 |-----------|--------------|-------------|
-| `target_scope` | Sets the immutable outer boundary. Loaded at startup from config or `-target-policy-file`. | Narrows within the policy boundary via `security set_target_scope`. Cannot expand beyond policy. |
+| `target_scope` | Sets the outer boundary. Loaded at startup from config or `-target-policy-file`; replaceable only by the operator via `SIGHUP`. | Narrows within the policy boundary via `security set_target_scope`. Cannot expand beyond policy. |
 | `rate_limit` | Sets ceilings (global RPS / per-host RPS). | May set equal-or-stricter limits via `security set_rate_limits`. |
 | `budget` | Sets ceilings (`max_total_requests`, `max_duration`). | May set equal-or-stricter via `security set_budget`. |
 
@@ -105,7 +115,9 @@ Target scope controls which network destinations the proxy can reach. Each rule 
 }
 ```
 
-This policy allows any subdomain of `target.com` and blocks all internal corporate hosts. These rules are locked at startup.
+This policy allows any subdomain of `target.com` and blocks all internal corporate hosts. The agent cannot change these rules.
+
+Rules are validated when the policy loads. A rule that could never match — for example `path_prefix: "/api/*"` (path prefixes are literal, so write `/api/`) or a scheme other than `http` / `https` — is rejected instead of silently turning a deny into a no-op.
 
 ### Agent Layer example (runtime)
 
@@ -199,7 +211,7 @@ The input filter inspects outgoing requests (body, URL, query string, headers) a
 | `destructive-sql` | DROP TABLE/DATABASE, TRUNCATE, DELETE without WHERE, etc. |
 | `destructive-os-command` | rm -rf, shutdown/reboot, mkfs, dd if=, etc. |
 
-When a request is blocked, the proxy returns `403 Forbidden` with an `X-Block-Reason: safety_filter` header and a JSON body containing the violation details.
+When a request is blocked, the proxy returns `403 Forbidden` with an `X-Block-Reason: safety_filter` header and a JSON body containing the violation details. A blocked native gRPC call is answered with `grpc-status: 7` (`PERMISSION_DENIED`) instead, so the client fails fast rather than waiting for its deadline.
 
 ### Output filter
 

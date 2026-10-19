@@ -23,6 +23,7 @@ yorishiro-proxy [subcommand] [flags]
 |------------|-------------|
 | `server` | Start the proxy server (default when no subcommand given) |
 | `client` | Call MCP tools via CLI against a running server |
+| `docs` | Show tool documentation (works offline, no server needed) |
 | `install` | Install and configure components (MCP, CA, Playwright) |
 | `upgrade` | Check for and install updates from GitHub Releases |
 | `version` | Print version information |
@@ -58,11 +59,13 @@ The client resolves the server address in this order:
 |------|-------------|-------------|
 | `-server-addr` | `YP_CLIENT_ADDR` | Server address (host:port) |
 | `-token` | `YP_CLIENT_TOKEN` | Bearer token for authentication |
-| `--format` | `YP_CLIENT_FORMAT` | Output format: `json`, `table`, `raw` |
+| `--format` | `YP_CLIENT_FORMAT` | Output format: `json`, `table`, `raw`, `text` |
 | `--raw` | -- | Compact JSON (overrides `--format`) |
 | `-q` / `--quiet` | -- | Suppress output on success |
 
-When stdout is a TTY, the default format is `json` (pretty-printed). When piped, it switches to `raw` (compact JSON).
+When stdout is a TTY, the default format is `json` (pretty-printed). When piped, it switches to `raw` (compact JSON). The `docs` tool defaults to `text`, which prints the document unescaped.
+
+Values are coerced to the type declared in the tool's JSON Schema, including nullable types and nested dot-notation paths (for example `params.max_requests_per_second=100` is sent as a number, not a string).
 
 #### Client examples
 
@@ -77,7 +80,7 @@ yorishiro-proxy client proxy_start listen_addr=127.0.0.1:8080
 yorishiro-proxy client query resource=flows limit=20 filter.method=POST
 
 # Replay a request
-yorishiro-proxy client resend action=resend flow_id=abc123
+yorishiro-proxy client resend_http flow_id=abc123
 
 # Configure upstream proxy
 yorishiro-proxy client configure upstream_proxy=http://proxy:8888
@@ -94,6 +97,37 @@ yorishiro-proxy client query resource=flows --format raw | jq '.[] | select(.met
 
 # Per-tool help (no server connection needed)
 yorishiro-proxy client query --help
+
+# Read the docs tool through a running server
+yorishiro-proxy client docs topic=fuzz_http section="Macro hook scopes"
+```
+
+### `docs`
+
+Print yorishiro-proxy's own documentation without contacting a server. The documents are embedded in the binary, so this works offline — useful when you are still setting up the proxy, or when driving it from CLI-based workflows. It serves the same corpus as the [`docs` MCP tool](../tools/docs.md).
+
+```bash
+yorishiro-proxy docs [topic] [section] [flags]
+```
+
+| Argument / flag | Description |
+|-----------------|-------------|
+| `topic` | Document to print. Omit to list every topic. Every MCP tool name is a topic (`query`, `macro`, `fuzz_http`, ...), plus `getting-started`, `examples`, `template-syntax`, and `docs` |
+| `section` | Print only this section. Accepts the heading text or its GitHub-style slug, case-insensitively; sub-sections are included |
+| `--section <heading>` | Same as the second positional argument |
+
+An unknown topic prints the list of valid topics; an unknown section prints that topic's heading outline. Both exit non-zero. Output is plain Markdown with no ANSI styling.
+
+```bash
+# List every topic with its estimated token size
+yorishiro-proxy docs
+
+# Print the whole macro reference
+yorishiro-proxy docs macro
+
+# Print a single section (heading text or slug)
+yorishiro-proxy docs macro "Variable substitution syntax"
+yorishiro-proxy docs macro --section variable-substitution-syntax
 ```
 
 ### `install`
@@ -189,7 +223,7 @@ These flags apply to the `server` subcommand (or bare invocation without a subco
 | `-ca-key` | `YP_CA_KEY` | -- | CA private key file path |
 | `-ca-ephemeral` | `YP_CA_EPHEMERAL` | `false` | Use ephemeral in-memory CA |
 | `-insecure` | `YP_INSECURE` | `false` | Skip upstream TLS certificate verification |
-| `-tls-fingerprint` | `YP_TLS_FINGERPRINT` | -- | TLS fingerprint profile: `chrome`, `firefox`, `safari`, `edge`, `random`, `none` |
+| `-tls-fingerprint` | `YP_TLS_FINGERPRINT` | `firefox` | TLS fingerprint profile: `firefox`, `chrome`, `safari`, `edge`, `random`, `none`. Case-insensitive; unknown values are rejected at startup |
 | `-log-level` | `YP_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 | `-log-format` | `YP_LOG_FORMAT` | `text` | Log format: `text`, `json` |
 | `-log-file` | `YP_LOG_FILE` | stderr | Log output file path |
@@ -199,7 +233,8 @@ These flags apply to the `server` subcommand (or bare invocation without a subco
 | `-stdio-mcp` | `YP_STDIO_MCP` | `false` | Enable stdio MCP transport in addition to HTTP MCP |
 | `-open-browser` | `YP_OPEN_BROWSER` | `false` | Open WebUI in browser when HTTP MCP starts |
 | `-ui-dir` | `YP_UI_DIR` | -- | Directory for WebUI static files, overrides embedded assets |
-| `-target-policy-file` | `YP_TARGET_POLICY_FILE` | -- | Target scope policy JSON file path |
+| `-export-dir` | `YP_EXPORT_DIR` | `~/.yorishiro-proxy/exports` | Directory that confines `manage` `export_flows` / `import_flows` file paths. Must already exist when set explicitly. See [Export directory](#export-directory-export-dir) |
+| `-target-policy-file` | `YP_TARGET_POLICY_FILE` | -- | Target scope policy JSON file path. Reloadable with `SIGHUP` |
 | `-safety-filter` | `YP_SAFETY_FILTER_ENABLED` | `false` | Enable SafetyFilter engine |
 | `-max-concurrent-streams` | `YP_MAX_CONCURRENT_STREAMS` | `0` | HTTP/2 `SETTINGS_MAX_CONCURRENT_STREAMS` advertised to clients. `0` uses the H2 Layer default (`500`). Range `1..4294967295` (USK-862) |
 
@@ -213,6 +248,37 @@ All flags accept a `YP_` prefixed environment variable as a fallback. To derive 
 4. Add the `YP_` prefix
 
 For example, `-log-level` becomes `YP_LOG_LEVEL`.
+
+## Signals
+
+On Unix, sending `SIGHUP` to the server re-reads the target scope policy and replaces the running Policy Layer without a restart:
+
+```bash
+kill -HUP <pid>
+```
+
+- The source is `-target-policy-file` if set, otherwise the `target_scope_policy` section of `-config`.
+- The reload is validated exactly like a boot. An invalid file is rejected (logged) and the current policy is kept.
+- Live connections that the new policy denies are closed. See [Target scope](../features/target-scope.md#reloading-the-policy-layer).
+- The handler is installed only when one of those flags is set (log line `target scope policy reload enabled`). Without either flag, `SIGHUP` terminates the process as before.
+
+!!! warning "Closing the terminal"
+    When the reload handler is active, closing the terminal that launched the server sends `SIGHUP` and triggers a reload instead of stopping the server. Stop it with `SIGINT` / `SIGTERM` instead.
+
+## Export directory (`-export-dir`)
+
+All server-side file I/O performed by the [`manage`](../tools/manage.md) tool's `export_flows` and `import_flows` actions is confined to a single directory:
+
+- Relative `output_path` / `input_path` values resolve against the export directory — not against your working directory or the server's.
+- Absolute paths must lie inside the export directory; anything else is rejected.
+- The default `~/.yorishiro-proxy/exports` is created on demand. An explicit `-export-dir` must already exist and be a directory.
+- `query` with `resource: "status"` reports the resolved path as `export_dir`.
+
+Use a dedicated directory: MCP callers can overwrite any file inside it. The server refuses to start when an operator-owned path — the config file, policy file, CA, database, log file, UI directory, plugin scripts, or TLS material — resolves inside the export directory.
+
+```bash
+yorishiro-proxy server -export-dir /srv/yorishiro/exports
+```
 
 ## MCP transport modes
 
@@ -331,8 +397,11 @@ YP_DB=client-audit yorishiro-proxy server
 # Skip upstream TLS verification
 yorishiro-proxy server -insecure
 
-# Use Firefox TLS fingerprint
-yorishiro-proxy server -tls-fingerprint firefox
+# Use the Chrome TLS fingerprint instead of the Firefox default
+yorishiro-proxy server -tls-fingerprint chrome
+
+# Disable fingerprint spoofing (standard Go crypto/tls)
+yorishiro-proxy server -tls-fingerprint none
 
 # Enable JSON-formatted logging to a file
 yorishiro-proxy server -log-format json -log-file /var/log/yorishiro.log

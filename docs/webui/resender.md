@@ -1,6 +1,6 @@
 # Resender
 
-The Resender page lets you edit and resend captured requests, supporting both HTTP and TCP protocols. You can modify any part of a request and preview changes with dry-run mode.
+The Resender page lets you edit and resend captured requests over HTTP, WebSocket, gRPC, and raw TCP. Each send goes through the matching typed MCP tool (`resend_http`, `resend_ws`, `resend_grpc`, or `resend_raw`).
 
 ![Resender](../images/webui_resender.png)
 
@@ -11,7 +11,12 @@ To start resending, you need to load a captured flow:
 1. Enter a flow ID in the input field (or navigate from the Flows page via the **Resend** button)
 2. Click **Load** (or press Enter)
 
-The editor populates with the flow's request data. The interface adapts based on the flow's protocol -- HTTP flows show an HTTP editor, TCP flows show a TCP editor.
+The editor populates with the flow's request data. The interface adapts based on the flow's protocol -- HTTP flows show an HTTP editor, WebSocket flows show a frame editor, gRPC flows show a gRPC editor, and TCP flows show a TCP editor.
+
+Two page mode tabs sit at the top of the page:
+
+- **Resend** -- The editor described on this page
+- **Compare** -- Response comparison. This view is currently suspended and only shows a placeholder; use the **Resend** tab and compare responses in the send history instead
 
 ## HTTP mode
 
@@ -44,17 +49,27 @@ Three tabs organize the request editing:
 
 - **Headers** -- Key-value editor for request headers. Add, modify, or remove individual headers.
 - **Body** -- Textarea for the request body content.
-- **Body patches** -- JSON patch editor for applying targeted modifications to the request body without rewriting it entirely. Each patch specifies a JSON path and replacement value.
+- **Body patches** -- Patch editor for applying targeted modifications to the request body without rewriting it entirely. See [Body patches](#body-patches).
+
+#### Body patches
+
+Each patch row has a mode selector, and the two modes are mutually exclusive:
+
+| Mode | Fields | Description |
+|------|--------|-------------|
+| **JSON path + value** | JSON path (e.g., `$.path.to.field`), new value (JSON) | Replace the value at a JSON path |
+| **Regex + replace** | Regex pattern, replace string | Replace every regex match in the body |
+
+Switching modes clears the row's fields. A row with an empty `json_path` (or empty `regex` in regex mode) shows an inline validation error, and the **Send** button stays disabled until every row is valid.
 
 #### Hooks
 
-When macros are defined, a **Hooks** section appears allowing you to attach pre-send and post-receive hooks. These execute macro steps before sending the request or after receiving the response, enabling authentication token refresh and similar workflows.
+When macros are defined, a **Hooks** section appears. It is currently **suspended**: the typed `resend_http` tool doesn't accept hooks yet, so the editor is shown greyed out and its values are not sent. To run a macro around a resend, call the [`macro`](../tools/macro.md) tool directly or use `fuzz_http` hooks.
 
 #### Actions
 
-- **Send** -- Sends the request (respects the dry-run toggle)
-- **Dry Run** -- Generates a preview without actually sending the request
-- **Default dry-run** -- Checkbox to make the Send button default to dry-run mode
+- **Send** -- Sends the request via `resend_http`. Disabled while any body patch is invalid
+- **Default dry-run (suspended)** -- Disabled checkbox. The typed resend tools have no dry-run mode
 
 ### Raw editor
 
@@ -64,7 +79,7 @@ The raw editor provides:
 - **TLS** -- Checkbox to enable TLS for the connection
 - **Tag** -- Optional tag field
 - **Raw HTTP text** -- Full editable HTTP message including request line, headers, and body
-- **Send Raw** / **Dry Run** buttons
+- **Send Raw** button (the dry-run checkbox is suspended here as well)
 
 ### Response viewer
 
@@ -72,10 +87,32 @@ The right panel displays the response after sending:
 
 - Status code badge (color-coded by class)
 - Duration in milliseconds
-- Dry-run indicator when applicable
 - Response headers and body with syntax highlighting
 
 When no response is available yet, a placeholder message is shown.
+
+## WebSocket mode
+
+When you load a WebSocket flow, the editor shows a single-frame editor that sends through `resend_ws`:
+
+- **Target** -- `host:port`. Optional; recovered from the flow when left blank
+- **Scheme** -- `wss` or `ws`
+- **Path** -- The upgrade path (e.g., `/ws/path`)
+- **Opcode** -- `text`, `binary`, `ping`, `pong`, or `close`
+- **FIN** -- Prefilled from the loaded flow's first client frame (`ws_fin` metadata), so a fragmented frame (FIN=0) is not silently resent as FIN=1
+- **Compressed** -- Mark the frame as per-message-deflate (RFC 7692) compressed. Shown for `text` and `binary` only
+- **Payload** -- Frame payload, as `text` or `base64`
+- **Close code / close reason** -- Shown for `close` frames (code 1000--4999)
+
+## gRPC mode
+
+When you load a gRPC flow, the editor sends a unary call through `resend_grpc`:
+
+- **Target** -- `host:port`. Optional; recovered from the flow when left blank
+- **Scheme** -- `https` or `http`
+- **Service** -- Fully qualified service name (`package.Service`)
+- **Method** -- Method name
+- **Message body** -- Plaintext message body. Proto-schema-aware editing is not available in the WebUI yet
 
 ## TCP mode
 
@@ -99,7 +136,17 @@ In Resend Raw mode, two tabs are available:
 - **Messages** -- Read-only list of original TCP messages showing direction (send/receive), size, and content
 - **Raw Patches** -- Editor for applying byte-level patches to the raw TCP data before resending
 
-Actions: **Send Raw**, **Dry Run**, and the dry-run toggle.
+Each raw patch row has a mode selector:
+
+| Mode | Description |
+|------|-------------|
+| **Offset + Data (base64)** | Overwrite bytes at a byte offset with base64-encoded data |
+| **Find/Replace (base64)** | Find and replace by base64-encoded bytes |
+| **Find/Replace (text)** | Find and replace by plain text |
+
+The offset field is validated as you type: it must be a non-negative integer, and an empty, fractional, or negative value shows an inline error and disables **Send Raw**. Only offset patches are sent to `resend_raw` (its `patches` parameter is offset-based); find/replace rows are kept in the editor but not applied.
+
+Action: **Send Raw** (the dry-run checkbox is suspended).
 
 ### TCP replay
 
@@ -113,25 +160,16 @@ The TCP response viewer shows the raw response data with byte count and duration
 
 ## Send history
 
-Below the editor, a history list records resend operations server-side, not just from the current browser session: the panel is backed by the same flow store that the [`query`](../tools/query.md) tool reads, so opening the WebUI on a different machine surfaces the same history. Each entry shows:
+Below the editor, the **Send History** list shows resend operations recorded server-side, not just from the current browser session: it is backed by `query("flows")` filtered to `origin: "resend"`, so the list survives a browser reload and opening the WebUI on a different machine surfaces the same history. Each entry shows:
 
-- Status code or byte count badge
-- HTTP method or RAW/REPLAY indicator
-- Target URL or address
-- Protocol badge (RAW, REPLAY)
-- Origin badge (`proxy`, `resend`, `fuzz`)
-- Dry-run indicator
+- Status code badge (`---` when there is no status, e.g. raw TCP)
+- Protocol badge
+- Method (or RAW/REPLAY indicator) and target URL or address
 - Tag (if set)
 - Duration
 - Timestamp
 
-### Origin filter and paging
-
-A filter chip restricts the list to a single `origin` -- typically `resend` to focus on tool-driven replays, or `fuzz` to triage a campaign. The list pages server-side (USK-787) so deep histories stay responsive even after weeks of activity.
-
-### Decoded bodies
-
-When the upstream applied `Content-Encoding` (gzip / deflate / br / zstd), the body viewer offers a toggle between the original compressed wire bytes and the decoded plaintext (USK-738). The hex preview is capped at 4 KiB; switch to text mode for larger payloads.
+Click an entry to open the corresponding flow on the [Flow detail](flows.md) page. The list pages server-side with **Prev** / **Next** buttons, so deep histories stay responsive.
 
 ## Related pages
 

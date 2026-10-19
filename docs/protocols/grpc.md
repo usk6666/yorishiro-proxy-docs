@@ -32,7 +32,15 @@ The Layer parses this path and stores the extracted service and method names on 
 - `Service`: `helloworld.Greeter`
 - `Method`: `SayHello`
 
-Path parsing is tolerant: malformed `:path` values (missing, empty, no leading slash, no separator, single segment) yield `Service=""` and `Method=""` together with a warning log. The malformed path remains observable on `Envelope.Raw` for diagnostic purposes — the wire bytes are never altered.
+Path parsing is tolerant: malformed `:path` values (missing, empty, no leading slash, no separator, single segment) yield `Service=""` and `Method=""` together with a debug log. The malformed path remains observable on `Envelope.Raw` for diagnostic purposes — the wire bytes are never altered.
+
+When forwarding, the parsed `Service` / `Method` view is authoritative whenever the observed `:path` was parseable (so an intercept or plugin override of service/method takes effect). When it was not parseable, the observed `:path` is forwarded as-is instead of being normalized. A query component on `:path` is kept and forwarded. The upstream `:authority` and `:scheme` are taken from the observed request.
+
+## Blocked calls
+
+When the SafetyFilter Input Filter blocks a native gRPC call, or you `drop` a held request item via intercept, the client receives a Trailers-Only response with `grpc-status: 7` (`PERMISSION_DENIED`) and `grpc-message: blocked by <reason>` (for example `blocked by safety_filter` or `blocked by intercept_drop`), plus `server: yorishiro-proxy` and `x-yorishiro-matched-rules` trailers. If response HEADERS were already relayed, the status arrives as trailers. Any upstream stream that was already opened is closed. The client fails fast instead of waiting for its deadline.
+
+The SafetyFilter `url` and `query` targets cover the gRPC `:path` and its query, so destructive-pattern presets also apply to the RPC target.
 
 ## Protobuf framing and LPM reassembly
 

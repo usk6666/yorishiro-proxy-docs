@@ -61,9 +61,9 @@ Every tool has a JSON schema defining its parameters and return types. This give
 }
 ```
 
-## The eleven MCP tools
+## The MCP tools
 
-All proxy operations are organized into eleven tools, each handling a coherent set of related actions:
+All proxy operations are organized into a small set of tools, each handling a coherent set of related actions:
 
 | Tool | Purpose |
 |------|---------|
@@ -71,13 +71,17 @@ All proxy operations are organized into eleven tools, each handling a coherent s
 | `proxy_stop` | Graceful shutdown of one or all listeners |
 | `configure` | Runtime configuration changes (scope, TLS passthrough, upstream proxy, etc.) |
 | `query` | Unified information retrieval: flows, status, config, CA cert, intercept queue, macros, fuzz jobs |
-| `resend` | Replay requests with mutations, raw byte replay, and structural diff comparison |
-| `fuzz` | Automated payload injection with sequential/parallel modes |
+| `resend_http` / `resend_ws` / `resend_grpc` / `resend_raw` | Per-protocol replay with typed mutations |
+| `fuzz_http` / `fuzz_ws` / `fuzz_grpc` / `fuzz_raw` | Per-protocol payload injection with typed positions and macro hooks |
 | `macro` | Multi-step request sequences with variable extraction |
 | `intercept` | Act on intercepted requests: release, modify, or drop |
 | `manage` | Flow data management (delete, export, import) and CA regeneration |
 | `security` | Target scope, rate limits, budgets, and SafetyFilter inspection |
-| `plugin` | List, reload, enable, and disable Starlark plugins |
+| `plugin_introspect` | List loaded Starlark plugins and their registered hooks |
+| `grpc_schema` | Register `.proto` schemas for schema-aware gRPC decode/encode |
+| `docs` | Self-service documentation: every tool reference and concept guide, by topic or section |
+
+The `docs` tool means an agent never has to guess parameter syntax: `docs()` lists every topic with an estimated token cost, and `docs(topic, section)` returns just the part it needs. The same corpus is available offline from the CLI as `yorishiro-proxy docs`.
 
 Many tools use an **action pattern** where a single tool handles multiple related operations. For example, `security` handles `set_target_scope`, `get_target_scope`, `test_target`, `set_rate_limits`, `get_rate_limits`, `set_budget`, `get_budget`, and `get_safety_filter` through its `action` parameter. This keeps the tool count manageable while covering a wide surface area.
 
@@ -111,6 +115,12 @@ yorishiro-proxy client query resource=flows limit=10 filter.method=POST
 ```
 
 The client auto-discovers the server via `~/.yorishiro-proxy/server.json`, which is written by the server on startup.
+
+To read tool documentation without a running server, use the offline `docs` subcommand:
+
+```bash
+yorishiro-proxy docs fuzz_http "Macro hook scopes"
+```
 
 ### Multi-agent shared access
 
@@ -168,4 +178,4 @@ MCP tools are designed for programmatic interaction: structured JSON in and out.
 
 - [Architecture](architecture.md) -- How MCP tools connect to the proxy engine
 - [Security model](security-model.md) -- How the two-layer security model interacts with MCP tools
-- [MCP tools overview](../tools/overview.md) -- Reference for all eleven MCP tools
+- [MCP tools overview](../tools/overview.md) -- Reference for all MCP tools

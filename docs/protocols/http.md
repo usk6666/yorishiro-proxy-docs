@@ -37,6 +37,12 @@ Every request and response flowing through the proxy is recorded as a **flow** i
 
 The Layer preserves the raw wire-format bytes verbatim on `Envelope.Raw` before any normalization, which is useful for detecting [HTTP request smuggling](https://portswigger.net/web-security/request-smuggling) patterns.
 
+### Wire-form request path
+
+The recorded request path is kept exactly as it appeared on the wire: percent-encoding is never decoded, and the query is split off at the first `?`. A request for `/a%2Fb?x=1` is recorded, queried, exported, and resent with the path `/a%2Fb`. JSON surfaces (`query`, JSONL export, HAR) `%XX`-escape only bytes that are not valid UTF-8.
+
+Security checks match either form: a target scope `path_prefix` or SafetyFilter `url` rule matches the wire path or its percent-decoded form, so `/%61dmin` does not slip past a `/admin` deny.
+
 ### Body size limits
 
 Request and response bodies are recorded up to a configurable maximum size. The Layer's parser surfaces oversize bodies as `*layer.StreamError`.
@@ -58,7 +64,26 @@ When the proxy detects a WebSocket upgrade request (`Connection: Upgrade` + `Upg
 
 ## Request timeout
 
-The proxy enforces a configurable read timeout (default: 60 seconds) for HTTP request headers. This protects against Slowloris-style denial-of-service attacks. If no complete request header arrives within the timeout, the connection is closed.
+`request_timeout_ms` (default `60000`) bounds how long a client may take to send each request **head** — the request line and headers. The same bound applies to the CONNECT request and to the client-side TLS MITM handshake, on the forward proxy, CONNECT, and `tcp_forwards` paths. This protects against Slowloris-style attacks where a client trickles bytes to hold a connection slot. The request body is not covered.
+
+On a keep-alive connection, the proxy waits up to `max(120s, request_timeout_ms)` for the first byte of the next request, then applies `request_timeout_ms` to the rest of the head. An idle keep-alive connection is closed after that wait.
+
+## Request size limits
+
+Limits are set at browser parity, so real-world requests with very long URLs (for example ad-tech requests with 20+ KiB paths) pass through:
+
+| Limit | Value | When exceeded |
+|-------|-------|---------------|
+| Request line | 4 MiB | `414 URI Too Long` + `Connection: close` |
+| Header section | 4 MiB | `431 Request Header Fields Too Large` + `Connection: close` |
+
+### Recording of rejected request heads
+
+When the proxy itself closes a connection while reading a request head — a `request_timeout_ms` expiry after some bytes arrived, a `414`, or a `431` — it records a stream with state `error` so you can see why the client failed. The stream carries a failure reason (`request_head_timeout`, `request_line_too_long`, or `request_header_too_large`), a `closed_by=proxy` tag, the received raw bytes as a send flow, and the generated `414` / `431` as a receive flow. `capture_scope` applies.
+
+## Connection limit
+
+Each listener accepts up to `max_connections` concurrent connections (default `512`, sized for a single proxied browser). Connections refused at the cap are surfaced to the agent: `query` with `resource: "status"` reports `connection_rejections`, and refused targets are recorded as error streams with `blocked_by: capacity` (rate-limited to about 10 per second).
 
 ## HTTP request smuggling detection
 
@@ -72,14 +97,14 @@ Detected patterns are surfaced as anomalies on the resulting `HTTPMessage` envel
 
 ## Plugin hooks
 
-The HTTP/1.x Layer dispatches the following plugin hooks during request processing:
+HTTP/1.x envelopes dispatch the `http` plugin hooks:
 
-| Hook | Trigger | Supported actions |
-|------|---------|-------------------|
-| `on_receive_from_client` | After receiving a request from the client | CONTINUE, DROP, RESPOND |
-| `on_before_send_to_server` | Before forwarding the request upstream | CONTINUE (modify headers/body) |
-| `on_receive_from_server` | After receiving the response from upstream | CONTINUE (modify headers/body) |
-| `on_before_send_to_client` | Before sending the response to the client | CONTINUE (modify headers/body) |
+| Hook | Phases | Supported actions |
+|------|--------|-------------------|
+| `("http", "on_request")` | `pre_pipeline`, `post_pipeline` | CONTINUE, DROP, RESPOND |
+| `("http", "on_response")` | `pre_pipeline`, `post_pipeline` | CONTINUE, RESPOND |
+
+See [Hook reference](../plugins/hook-reference.md) for the full surface.
 
 ## Starting an HTTP listener
 

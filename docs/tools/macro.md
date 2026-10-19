@@ -36,9 +36,9 @@ Each step defines a request to send:
 |-------|------|----------|---------|-------------|
 | `id` | string | Yes | | Unique step identifier |
 | `flow_id` | string | Yes | | Recorded flow to use as template |
-| `override_method` | string | No | | Override HTTP method |
+| `override_method` | string | No | | Override HTTP method (supports `§variable§` templates) |
 | `override_url` | string | No | | Override request URL (supports `§variable§` templates) |
-| `override_headers` | object | No | | Header overrides as key-value pairs (supports templates) |
+| `override_headers` | object | No | | Header overrides as key-value pairs (templates in values only). Keys match recorded header names case-sensitively |
 | `override_body` | string | No | | Override request body (supports templates) |
 | `on_error` | string | No | `"abort"` | Error handling: `"abort"`, `"skip"`, or `"retry"` |
 | `retry_count` | integer | No | `3` | Retry count when on_error is `"retry"` |
@@ -84,6 +84,7 @@ Step guard condition -- the step is only executed if the condition is met:
 | `name` | string | Macro name |
 | `step_count` | integer | Number of steps |
 | `created` | boolean | `true` if new, `false` if updated |
+| `warnings` | string[] | Non-fatal template diagnostics from a static check (see [Unknown variable warnings](#unknown-variable-warnings)). The macro is always saved |
 
 ### run_macro
 
@@ -104,7 +105,7 @@ Execute a stored macro.
 | `status` | string | `"completed"`, `"error"`, or `"timeout"` |
 | `steps_executed` | integer | Number of steps executed |
 | `kv_store` | object | Final KV Store contents |
-| `step_results` | array | Per-step results (id, status, status_code, duration_ms, error) |
+| `step_results` | array | Per-step results: `id`, `status` (`"completed"`, `"warning"`, `"skipped"`, `"error"`), `status_code`, `duration_ms`, `error`, `warnings` |
 | `error` | string | Error message (if any) |
 
 ### delete_macro
@@ -123,6 +124,47 @@ Remove a stored macro definition.
 |-------|------|-------------|
 | `name` | string | Macro name |
 | `deleted` | boolean | `true` if deleted |
+
+## Variable substitution syntax
+
+The only template syntax is `§name§` -- U+00A7 SECTION SIGN on both sides. References are replaced from the KV Store, which is populated by `initial_vars`, `run_macro` `vars`, earlier steps' `extract` results, and runtime-reserved keys.
+
+```text
+override_method:  "§http_verb§"
+override_url:     "https://api.example.com/users/§user_id§"
+override_headers: {"Cookie": "PHPSESSID=§session_cookie§"}
+override_body:    "user=admin&token=§csrf_token§"
+```
+
+- The four `override_*` fields are the **only** expansion sites. In `override_headers`, only values are expanded; header names are copied verbatim. `extract` and `when` are never expanded.
+- An `override_headers` key replaces a recorded header only when the names match **case-sensitively**. HTTP/2 flows record lowercase names, so use `cookie` rather than `Cookie` on an h2-recorded flow -- otherwise the override is added next to the recorded header instead of replacing it.
+- `{{name}}`, `${name}`, and `%name%` are **not** expanded. They are sent literally, so template-injection payloads pass through unmodified. A residual token of these forms produces a step warning that suggests the `§name§` rewrite.
+- Keys starting with `__` (such as `§__nonce§`, `§__iteration§`) are reserved for runtime state. User-supplied values for them are dropped.
+
+### Encoder chain
+
+Pipe a value through one or more encoders: `§name | encoder1 | encoder2§`. Available encoders: `url_encode`, `base64`, `base64_decode`, `hex`, `html_encode`, `lower`, `upper`, `md5`, `sha256`.
+
+```text
+override_url:  "https://example.com/?q=§payload | url_encode§"
+override_body: "auth=§credentials | base64§"
+```
+
+An unknown encoder name fails the step. An unknown **variable** does not -- see below.
+
+### Unknown variable warnings
+
+A `§name§` that does not resolve (for example, the typo `§sesion_cookie§`) is still sent literally on the wire, but it is never silent:
+
+- **`define_macro`** runs a static check and returns `warnings[]`. A name is reported when it is defined by neither `initial_vars`, a **preceding** step's `extract`, nor a reserved `__` key. This is a warning, not an error -- the macro is saved, and you can still supply the value through `run_macro` `vars`. A step's own `extract` does not count for that step, because extraction runs after the request is sent.
+- **`run_macro`** re-checks each step against the live KV Store just before sending. The step's `status` becomes `"warning"` and its `warnings[]` lists the unresolved name together with the variable names that *are* available (names only -- values are never echoed):
+
+```text
+header:Cookie: §sesion_cookie§ — variable not found in KV Store;
+available: csrf_token, session_cookie, __nonce
+```
+
+Only the `override_*` fields are scanned; a `§` that appears in the recorded base flow is left alone. Steps skipped by their `when` guard are not scanned.
 
 ## Examples
 
@@ -197,6 +239,7 @@ Remove a stored macro definition.
 ## Related pages
 
 - [Macros](../features/macros.md) -- Macro feature guide
+- [fuzz_http](fuzz-http.md#macro-hooks) -- Run macros as `pre_macro` / `post_macro` fuzz hooks
 - [query](query.md) -- Query macros with `macros` and `macro` resources
 - [resend_http](resend-http.md), [resend_ws](resend-ws.md), [resend_grpc](resend-grpc.md), [resend_raw](resend-raw.md) -- typed per-protocol resend tools
 - [fuzz_http](fuzz-http.md), [fuzz_ws](fuzz-ws.md), [fuzz_grpc](fuzz-grpc.md), [fuzz_raw](fuzz-raw.md) -- typed per-protocol fuzz tools

@@ -47,7 +47,7 @@ Export flows to JSONL or HAR (HTTP Archive 1.2) format with optional filtering.
 | `format` | string | No | `"jsonl"` | Export format: `"jsonl"` or `"har"` |
 | `filter` | object | No | | Flow filter criteria |
 | `include_bodies` | boolean | No | `true` | Include message bodies in export |
-| `output_path` | string | Conditional | | File path for output. Required for HAR; optional for JSONL (inline if omitted) |
+| `output_path` | string | Conditional | | File path for output, confined to the [export directory](#file-paths). Required for HAR; optional for JSONL (inline if omitted) |
 
 Filter fields:
 
@@ -65,6 +65,7 @@ Filter fields:
 
 - **JSONL** -- each line is a complete JSON object. Supports inline and file output. With `wire_level` set to a non-`"semantic"` value, overlay rows are emitted as additional lines so forensic exports preserve the wire.
 - **HAR** -- HTTP Archive 1.2 format compatible with browser DevTools, Burp Suite, and OWASP ZAP. File output only. Raw TCP and gRPC flows are excluded. WebSocket flows include `_webSocketMessages`. HAR is a semantic format and ignores the `wire_level` filter.
+- **URLs** (both formats) -- the request path is exported in wire form (percent-encoding as sent). Bytes that are not valid UTF-8 are written `%XX`-escaped (the wire byte `0xFF` as `%FF`); all other bytes are verbatim. This is the one lossy case: importing such a JSONL row stores the escaped text, not the original byte.
 
 #### Response
 
@@ -72,7 +73,7 @@ Filter fields:
 |-------|------|-------------|
 | `exported_count` | integer | Number of flows exported |
 | `format` | string | Export format used |
-| `output_path` | string | File path (if file output) |
+| `output_path` | string | Absolute file path inside the export directory (if file output) |
 | `data` | string | Exported data (if inline output) |
 
 ### import_flows
@@ -80,13 +81,13 @@ Filter fields:
 Import flows from a JSONL file.
 
 !!! note "Path resolution"
-    `input_path` (and `export_flows.output_path`) is resolved relative to the proxy server's working directory at the time the tool runs, not the MCP client's working directory. Use absolute paths when in doubt.
+    `input_path` (and `export_flows.output_path`) is confined to the server's export directory. See [File paths](#file-paths).
 
 #### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `input_path` | string | Yes | | File path to read import data |
+| `input_path` | string | Yes | | File path to read import data, confined to the export directory (e.g. `"flows.jsonl"`) |
 | `on_conflict` | string | No | `"skip"` | Conflict policy: `"skip"` or `"replace"` |
 
 #### Response
@@ -96,7 +97,7 @@ Import flows from a JSONL file.
 | `imported` | integer | Number of flows imported |
 | `skipped` | integer | Number of flows skipped |
 | `errors` | integer | Number of errors |
-| `source` | string | Source file path |
+| `source` | string | Absolute source file path inside the export directory |
 | `error_details` | array | Details of import errors (if any) |
 
 ### regenerate_ca_cert
@@ -119,6 +120,20 @@ No parameters required.
 | `persisted` | boolean | Whether the CA is saved to disk |
 | `cert_path` | string | File path of the persisted CA |
 | `install_hint` | string | Guidance for installing the CA certificate |
+
+### File paths
+
+Every file that `export_flows` writes and `import_flows` reads lives in a single **export directory** on the proxy server's filesystem. The operator sets it at server start with `-export-dir` / `YP_EXPORT_DIR` (default `~/.yorishiro-proxy/exports/`); no MCP tool can change it. The `query` `status` and `config` resources report it as `export_dir`, which is how remote (HTTP MCP) callers learn where their files land.
+
+- A **relative** path resolves against the export directory: `"flows.har"`, `"run1/flows.jsonl"`. This is the recommended form.
+- An **absolute** path is accepted only if it lies inside the export directory, spelled as reported in `export_dir` (or as its symlink-resolved real path).
+- Anything else -- an absolute path elsewhere, a `..` escape, or a symlink inside the directory that points outside it -- is rejected. A symlink as the final path component is also rejected.
+- Subdirectories must already exist; they are not created. Re-exporting to an existing name overwrites it.
+
+The server refuses to start if the export directory contains its own config file, policy file, CA certificate/key, database, log file, WebUI directory, plugin scripts, or TLS client certificate files, so an export can never overwrite them.
+
+!!! warning "Use a dedicated export directory"
+    `-export-dir` must point to a directory used only for exports. The boot check only knows the proxy's own files; anything else in the directory can be overwritten by an MCP caller. For example, pointing it at `~/.config` would let an agent replace shell or autostart files. `$HOME` itself is refused.
 
 ## Examples
 
@@ -161,7 +176,7 @@ No parameters required.
   "params": {
     "format": "jsonl",
     "include_bodies": true,
-    "output_path": "/tmp/export.jsonl"
+    "output_path": "export.jsonl"
   }
 }
 ```
@@ -178,7 +193,7 @@ No parameters required.
       "scheme": "https",
       "url_pattern": "/api/"
     },
-    "output_path": "/tmp/api-flows.har"
+    "output_path": "api-flows.har"
   }
 }
 ```
@@ -190,7 +205,7 @@ No parameters required.
 {
   "action": "import_flows",
   "params": {
-    "input_path": "/tmp/export.jsonl",
+    "input_path": "export.jsonl",
     "on_conflict": "skip"
   }
 }

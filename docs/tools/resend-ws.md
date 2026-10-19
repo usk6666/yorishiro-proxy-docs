@@ -8,7 +8,7 @@ Resend a single WebSocket frame via a freshly dialled upstream connection with `
 |-----------|------|----------|---------|-------------|
 | `flow_id` | string | No | | Recorded WebSocket stream id. When set, the upgrade dance inherits URL, request headers, and the negotiated `permessage-deflate` extension |
 | `target_addr` | string | Conditional | | Upstream `host:port`. Overrides the dial target while preserving the recovered `:authority`. Required when `flow_id` is empty |
-| `scheme` | string | Conditional | `"ws"` | `"ws"` or `"wss"`. Required when `flow_id` is empty |
+| `scheme` | string | Conditional | `"ws"` | `"ws"` or `"wss"`. Required when `flow_id` is empty. Any other value (e.g. `"https"`) is rejected, including alongside `flow_id`. For target scope, `ws` matches as `http` and `wss` as `https` |
 | `path` | string | Conditional | | Upgrade request path. Required when `flow_id` is empty |
 | `raw_query` | string | No | | Upgrade request raw query string without the leading `?` |
 | `opcode` | string | Yes | | Frame opcode: `"text"`, `"binary"`, `"close"`, `"ping"`, `"pong"` |
