@@ -38,6 +38,7 @@ Stop proxy listener(s). Performs a graceful shutdown, waiting for existing conne
 - The proxy must be running; otherwise an error is returned.
 - Active connections are allowed to finish before the server shuts down.
 - After stopping, you can call `proxy_start` again to restart.
+- Intercept holds still pending when the listener stops end without an `intercept` action and are recorded with `blocked_by: "intercept_cancelled"` (see [query](query.md#blocked-flows)).
 
 ## Related pages
 

@@ -7,20 +7,30 @@ Configure runtime proxy settings while the proxy is running. Supports incrementa
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `operation` | string | No | `"merge"` | Operation type: `"merge"` or `"replace"` |
-| `upstream_proxy` | string | No | | Upstream proxy URL (empty string to disable, omit to keep current) |
+| `name` | string | No | `"default"` | Listener name. Currently scopes `upstream_proxy` only; other sections remain process-global |
+| `upstream_proxy` | string \| object | No | | Upstream proxy URL or rotation object for the listener (empty string to disable, omit to keep current). See [upstream_proxy](#upstream_proxy) |
 | `capture_scope` | object | No | | Capture scope configuration |
 | `tls_passthrough` | object | No | | TLS passthrough configuration |
 | `intercept_rules` | object | No | | Intercept rules configuration |
 | `intercept_queue` | object | No | | Intercept queue configuration |
 | `auto_transform` | object | No | | Auto-transform rules configuration |
 | `socks5_auth` | object | No | | SOCKS5 authentication configuration |
-| `tls_fingerprint` | string | No | | TLS fingerprint profile (`chrome`, `firefox`, `safari`, `edge`, `random`, `none`) |
+| `tls_fingerprint` | string | No | | TLS fingerprint profile (`firefox`, `chrome`, `safari`, `edge`, `random`, `none`) |
 | `max_connections` | integer | No | | Maximum concurrent connections (1--100000) |
 | `max_concurrent_streams` | integer | No | | HTTP/2 `SETTINGS_MAX_CONCURRENT_STREAMS` advertised to clients (1--65535) |
 | `peek_timeout_ms` | integer | No | | Protocol detection timeout in ms (100--600000) |
-| `request_timeout_ms` | integer | No | | HTTP request header read timeout in ms (100--600000) |
+| `request_timeout_ms` | integer | No | | Request-head timeout in ms: HTTP/1.x request line + headers, `CONNECT` request, client TLS handshake (100--600000). See [Connection limits and timeouts](#connection-limits-and-timeouts) |
 | `budget` | object | No | | Diagnostic session budget configuration |
 | `client_cert` | object | No | | Global mTLS client certificate configuration |
+
+### upstream_proxy
+
+Accepts the same two shapes as [`proxy_start`](proxy-start.md#upstream_proxy):
+
+- **String** -- a literal proxy URL (`http://host:port` or `socks5://host:port`). An empty string `""` disables the upstream proxy and clears any active rotation.
+- **Object** -- `{"url": "..."}` for a literal URL, or `{"url_template": "...", "rotation": {"policy": "..."}}` for per-listener rotation. Policies: `per_request`, `per_connection`, `per_target_host`, `sticky`. `url` and `url_template` are mutually exclusive, and `rotation` is required with `url_template`.
+
+The template is probe-expanded at call time, so a malformed template fails the call. Each call replaces the resolver entirely and drops cached per-connection, per-host, and sticky URLs. The setting applies to the listener named by `name`.
 
 ### capture_scope
 
@@ -39,6 +49,8 @@ Configure runtime proxy settings while the proxy is running. Supports incrementa
 |-------|------|-------------|
 | `includes` | array | Full replacement of include rules |
 | `excludes` | array | Full replacement of exclude rules |
+
+Each rule is AND-evaluated across `hostname` / `url_prefix` / `method`; at least one field must be set. Excludes win over includes. `url_prefix` is compared byte-exact against the wire-form request path (percent-encoding is not decoded, and the query string is excluded) on both HTTP/1.x and HTTP/2.
 
 ### tls_passthrough
 
@@ -153,12 +165,25 @@ For full-replace semantics, use the `security` tool's `set_budget` action instea
 | `cert_path` | string | PEM client certificate path (empty to remove) |
 | `key_path` | string | PEM client private key path (empty to remove) |
 
+### Connection limits and timeouts
+
+- **`max_connections`** -- connections refused at the cap are reported in the `query` `status` resource under `connection_rejections`, and recorded as flows with `blocked_by: "capacity"`.
+- **`request_timeout_ms`** -- bounds, per client connection:
+    - each HTTP/1.x request line and header section, counted from the request's first byte (every request on a keep-alive connection, for plain HTTP, MITM HTTPS, and `tcp_forwards` alike)
+    - the `CONNECT` request itself
+    - the client-side TLS MITM handshake
+    - the plain-HTTP forward target peek and the CONNECT / SOCKS5 inner first-byte peek
+
+    The request body is not covered. A client that misses the deadline is disconnected without a response. When this happens to an HTTP/1.x request head after some of it arrived, the flow is recorded with `state: "error"`, `failure_reason: "request_head_timeout"`, and the received bytes. A `CONNECT`, TLS handshake, or forward-peek timeout is not recorded yet. Separately, an idle keep-alive client connection is closed after 120 seconds, or after `request_timeout_ms` if that is longer. Changes apply to the next request or connection.
+
 ## Response
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `status` | string | `"configured"` |
-| `upstream_proxy` | string | Current upstream proxy URL (if changed) |
+| `upstream_proxy` | string | Current upstream proxy URL (if changed; empty while rotation is active) |
+| `upstream_proxy_template` | string | Current rotation template, credentials redacted (only while rotation is active) |
+| `upstream_proxy_rotation_policy` | string | Current rotation policy (only while rotation is active) |
 | `capture_scope` | object | Current scope state: `include_count`, `exclude_count` (if changed) |
 | `tls_passthrough` | object | Current passthrough state: `total_patterns` (if changed) |
 | `intercept_rules` | object | Current rules state: `total_rules`, `enabled_rules` (if changed) |
@@ -263,6 +288,28 @@ For full-replace semantics, use the `security` tool's `set_budget` action instea
 // configure
 {
   "upstream_proxy": "http://corporate-proxy:3128"
+}
+```
+
+### Rotate the upstream proxy per connection
+
+```json
+// configure
+{
+  "name": "default",
+  "upstream_proxy": {
+    "url_template": "http://session-§__nonce§:pass@residential.example:8080",
+    "rotation": {"policy": "per_connection"}
+  }
+}
+```
+
+### Disable the upstream proxy
+
+```json
+// configure
+{
+  "upstream_proxy": ""
 }
 ```
 

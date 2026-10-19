@@ -26,7 +26,7 @@ Click any row to navigate to the macro detail/editor page.
 - **Edit** -- Navigate to the macro editor
 - **Delete** -- Delete the macro (with confirmation dialog)
 
-The macro list polls for updates every 5 seconds.
+The macro list polls for updates every 5 seconds. Polling pauses while the browser tab is hidden.
 
 ## Macro editor
 
@@ -49,6 +49,12 @@ Each macro consists of one or more steps. Each step specifies:
     - **Abort** -- Stop the macro
     - **Skip** -- Skip the failed step and continue
     - **Retry** -- Retry the step (configurable retry count, delay, and timeout)
+
+### Template warnings
+
+When you save a macro, the server statically checks its `§var§` templates. A variable is reported when it is defined by neither the initial variables, a preceding step's extraction rule, nor a reserved `__` key -- typically a typo such as `§sesion_cookie§`. The macro is still saved; the warnings are shown as toasts (up to three, followed by an "...and N more template warning(s)" summary).
+
+Ignore the warning if you plan to supply the value at run time. Otherwise fix the name: at run time an unresolved `§var§` is sent on the wire literally and the step's status becomes `warning`.
 
 ### Variable extraction
 

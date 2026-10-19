@@ -9,6 +9,102 @@ see the upstream file for the complete per-PR entries.
 
 _No changes yet._
 
+## 0.20.1 (2026-10-19)
+
+A bug-fix release on top of 0.20.0.
+
+### Fixed
+
+- **HTTP/2 resend of h2-recorded flows** -- [`resend_http`](../tools/resend-http.md) and [`fuzz_http`](../tools/fuzz-http.md) now send flows recorded over HTTP/2 over HTTP/2 instead of silently downgrading to HTTP/1.1 (#171).
+- **Native gRPC blocks answer `PERMISSION_DENIED`** -- a native gRPC call blocked by scope, the SafetyFilter, or an intercept drop now fails with gRPC status `PERMISSION_DENIED` instead of a transport error (#176).
+- **Server-first protocols** -- WebSocket frames and raw TCP bytes the server sends first are relayed without waiting for the client (#175, #180).
+- **Intercept holds ended by context cancellation** are recorded as `blocked_by: intercept_cancelled` (#179).
+- **Long-lived HTTP/2 connections** -- closed streams are retired so the connection is no longer refused after many streams (#174).
+- **Recorded TLS passthrough** no longer stalls 5 s on the ClientHello peek (#172).
+- **`capture_scope` on overlay rows** is decided from the stream's request head (#173), and `Stream.Scheme` is backfilled when an `h2-frame` overlay creates the stream (#170).
+- **gRPC-Web** forwards malformed bodies and request trailers and reconciles framing headers (#177).
+
+## 0.20.0 (2026-10-19)
+
+This release tightens target-scope enforcement end to end and adds operator-side controls for the Policy Layer and export paths.
+
+### Added
+
+- **`SIGHUP` reloads the Policy Layer** -- operators can edit the target-scope policy file and send `SIGHUP` to apply it without restarting (#148). See [security](../tools/security.md#reloading-the-policy-layer-operator-only).
+- **Target scope re-checked at more points** -- every fuzz variant is checked against target scope (#153), an intercept hold is re-checked when it is released (#154), and admitted live connections are closed when a policy change denies them (#155, #168).
+- **`max_connections` rejections surfaced to the agent** -- rejected connections are recorded with `blocked_by: capacity` and counted under `connection_rejections` in `query("status")` (#149).
+
+### Changed
+
+- **Breaking**: `manage` `export_flows` / `import_flows` file paths are confined to an operator export directory (`-export-dir` / `YP_EXPORT_DIR`, default `~/.yorishiro-proxy/exports/`). Paths outside it are rejected (#142). See [manage](../tools/manage.md).
+- **`max_connections` default raised 128 -> 512** (#144).
+- **HPACK and request-line limits raised to browser parity**; an oversized request line is answered with `414` (#151).
+- **`request_timeout_ms` bounds the client request head** (slowloris protection) (#158).
+- **Recorded request paths stay in wire form** -- the path is kept exactly as sent (including `%XX` escapes) in flows, `path_pattern` / `url_prefix` matching, and resend (#150).
+- **Config validation at load** -- `tls_fingerprint` (#116) and Policy Layer target-scope rules (#141) are validated when the config is loaded.
+
+### Fixed
+
+- **Target scope rules** -- bracketed IPv6 hosts, `path_prefix`, and empty-host rules now take effect (#143); every scope check receives a resolved scheme derived from the observed TLS state (#129, #132).
+- **gRPC SafetyFilter** -- the Input SafetyFilter now scans `:path` and the query string (#131).
+- **`resend_grpc`** takes its TLS decision from the observed transport instead of the declared scheme (#125).
+- **CLI client** coerces nullable and dot-notation parameters to their schema type (#147).
+- Numerous HTTP/2 robustness fixes around GOAWAY, CONTINUATION, flow control, and `REFUSED_STREAM` propagation (#145, #146, #156, #159, #161–#163, #166).
+
+## 0.19.1 (2026-09-14)
+
+### Fixed
+
+- **npm distribution** -- fixed the release publish paths so the npm packages install correctly (#114).
+
+## 0.19.0 (2026-09-14)
+
+### Added
+
+- **`docs` MCP tool and `docs` CLI subcommand** -- the full reference ships in-band: agents call [`docs`](../tools/docs.md) with a `topic` (and optional `section`), and humans run `yorishiro-proxy docs <topic>` (#106, #110).
+- **npm distribution** -- prebuilt binaries are published to npm via `optionalDependencies` (#84). See [installation](../getting-started/installation.md).
+- **Client ClientHello fingerprint capture** -- the JA3 / JA4 of the client's ClientHello is recorded on the flow (`conn_info.tls_client_ja3` / `tls_client_ja4`) (#88).
+- **Firefox-shaped upstream HTTP/2 fingerprint** -- the upstream HTTP/2 SETTINGS / priority shape follows `tls_fingerprint` (#87).
+- **Loud failure for unresolved macro template variables** -- an unresolved `§var§` is reported as a warning instead of passing silently (#101). The `§var§` syntax is now documented in the macro tool schema (#98).
+
+### Changed
+
+- **`tls_fingerprint` default is now `firefox`** (was `chrome`), and the `none` escape hatch is fixed (#89, #93).
+
+### Fixed
+
+- **SafetyFilter violation logs redact the matched fragment** (CWE-312) (#85).
+- **MCP prompt playbooks** disambiguate `{{}}` prompt placeholders from `§§` macro templates (#99).
+
+## 0.18.2 (2026-05-26)
+
+### Added
+
+- **Sniff-first MITM** -- the client's ClientHello ALPN is peeked before the upstream is dialed, so the proxy negotiates the same protocol on both legs (#69, #70).
+- **Upstream redial metrics** -- `h1_upstream` / `h2_upstream` redial counters are exposed in `query("status")` (#73, #74).
+
+### Fixed
+
+- **Stale HTTP/1.x upstream connections** are detected and redialed before send, with a replay-safe retry on `EPIPE` (#71, #72).
+
+## 0.18.1 (2026-05-24)
+
+### Fixed
+
+- **HTTP/2 GOAWAY handling** -- upstream GOAWAY now triggers a transparent redial / pre-warm across N-chain upstream proxies, matching browser behaviour (#65–#68).
+
+## 0.18.0 (2026-05-23)
+
+### Added
+
+- **Upstream proxy rotation** -- `upstream_proxy` accepts a URL template with a rotation policy, both per listener for live MITM traffic ([`proxy_start`](../tools/proxy-start.md) / [`configure`](../tools/configure.md)) and per iteration for [`fuzz_http`](../tools/fuzz-http.md) / [`resend_http`](../tools/resend-http.md) (#33, #34, #50). The WebUI Settings page gains an upstream proxy editor (#42).
+- **Fuzzer macro hooks** -- `fuzz_http`, `fuzz_ws`, `fuzz_raw`, and `fuzz_grpc` support per-iteration and per-job (`scope: "job"`) pre/post macro hooks, per-hook `vars` overrides, and `run_interval` (#38, #47, #55, #57–#64). See [fuzzer](../features/fuzzer.md).
+- **`query("config")` exposes `intercept_queue`** settings, which the WebUI uses to prefill its forms (#52).
+
+### Fixed
+
+- WebUI fixes across Flow detail, Intercept, Resend, Security, and Settings, including pseudo-header filtering in cURL / HAR exports (#35–#51).
+
 ## 0.17.0 (2026-05-21)
 
 This release migrates the bundled vulnerability-verification playbooks from a filesystem-installed `.claude/skills/` skill tree to MCP Prompts delivered over the standard `prompts/list` / `prompts/get` surface. The `yorishiro-proxy install skills` subcommand and the `--skills-dir` flag are removed -- after upgrading, the same nine playbooks become visible to your MCP host automatically on next connect, with no install step.

@@ -126,7 +126,7 @@ Rate limits and budgets use the same two-layer design as [Target scope](target-s
 
 ### Policy layer
 
-Set at startup from the config file. Defines the upper bounds that the agent cannot exceed. Immutable at runtime.
+Set at startup from the config file's `target_scope_policy` section or the `-target-policy-file`. Defines the upper bounds that the agent cannot exceed. The agent cannot change it; only the operator can replace it at runtime with a `SIGHUP` reload (see [Reloading the Policy layer](target-scope.md#reloading-the-policy-layer)). A reload does not reset the request counter, and re-arms the duration limit against the new value from the original session start.
 
 ### Agent layer
 
@@ -214,20 +214,24 @@ This differs from the `security` tool's `set_budget` action, which uses full-rep
 
 ## Config file setup
 
-Set Policy layer limits in the config file:
+Set Policy layer limits in the config file's `target_scope_policy` section (or at the top level of a `-target-policy-file`):
 
 ```json
 {
-  "rate_limits": {
-    "max_requests_per_second": 50,
-    "max_requests_per_host_per_second": 20
-  },
-  "budget": {
-    "max_total_requests": 10000,
-    "max_duration": "4h"
+  "target_scope_policy": {
+    "rate_limits": {
+      "max_requests_per_second": 50,
+      "max_requests_per_host_per_second": 20
+    },
+    "budget": {
+      "max_total_requests": 10000,
+      "max_duration": "4h"
+    }
   }
 }
 ```
+
+Values must be `>= 0` (`0` means unlimited). A negative value is rejected at load instead of silently meaning "unlimited".
 
 ## Practical use cases
 

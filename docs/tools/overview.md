@@ -10,9 +10,9 @@ The resend and fuzz surfaces are split per protocol. Each tool owns a typed JSON
 
 | Tool | Purpose |
 |------|---------|
-| [`proxy_start`](proxy-start.md) | Start a proxy listener. Listen address, capture scope, TLS passthrough, intercept rules, auto-transform, TCP forwarding |
+| [`proxy_start`](proxy-start.md) | Start a proxy listener. Listen address, upstream proxy (with rotation), capture scope, TLS passthrough, intercept rules, auto-transform, TCP forwarding |
 | [`proxy_stop`](proxy-stop.md) | Stop a single listener by name or all listeners |
-| [`configure`](configure.md) | Modify runtime settings (upstream proxy, scope, TLS passthrough, intercept rules, auto-transform, limits, timeouts) |
+| [`configure`](configure.md) | Modify runtime settings (upstream proxy and rotation, scope, TLS passthrough, intercept rules, auto-transform, limits, timeouts) |
 | [`query`](query.md) | Retrieve flows, flow details, messages, status, config, CA cert, intercept queue, macros, fuzz jobs, fuzz results |
 | [`resend_http`](resend-http.md) | Resend an HTTP/1.x or HTTP/2 request with `HTTPMessage`-typed schema |
 | [`resend_ws`](resend-ws.md) | Resend a WebSocket frame with `WSMessage`-typed schema |
@@ -28,6 +28,10 @@ The resend and fuzz surfaces are split per protocol. Each tool owns a typed JSON
 | [`security`](security.md) | Security controls (target scope, rate limits, diagnostic budgets, SafetyFilter) |
 | [`grpc_schema`](grpc-schema.md) | Manage `.proto` schemas for schema-aware gRPC decode (`query`) and encode (`resend_grpc`); supports descriptor-set upload, host `protoc`, and reflection-based discovery |
 | [`plugin_introspect`](plugin-introspect.md) | Read-only list of loaded plugins, their hook registrations, and redacted vars |
+| [`docs`](docs.md) | Self-service documentation: returns the embedded help for any tool or concept topic, or a single section of it |
+
+!!! tip "Let the agent read the reference"
+    Tool descriptions are kept short and end with "Full reference: call `docs(topic="<tool>")`". Your agent can call [`docs`](docs.md) at any time to fetch the full parameter reference for a tool, or a single section of it.
 
 ## Tool calling format
 
@@ -71,6 +75,8 @@ A common session follows this pattern:
 Alongside the typed tools above, the MCP server publishes nine **prompts** -- self-contained vulnerability-verification playbooks (`verify-idor`, `verify-sqli`, `verify-xss`, `verify-csrf`, `audit-auth`, `fuzz-endpoint`, `replay-with-mods`, `capture-traffic`, `stateful-fuzz-loop`). Prompts ship inside the binary and are delivered to MCP hosts via the standard `prompts/list` / `prompts/get` surface; the model executes the playbook by issuing the typed tool calls listed above. See [MCP prompts](../guides/mcp-prompts.md) for the catalogue, arguments, and host-side usage.
 
 ## Related pages
+
+- [docs](docs.md) -- In-band documentation for agents
 
 - [MCP prompts](../guides/mcp-prompts.md) -- Vulnerability-verification playbooks delivered over MCP
 - [Architecture](../concepts/architecture.md) -- How yorishiro-proxy is built

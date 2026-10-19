@@ -22,7 +22,7 @@ The config file is a single JSON object with the following top-level sections:
 {
   "listen_addr": "127.0.0.1:8080",
   "upstream_proxy": "",
-  "tls_fingerprint": "chrome",
+  "tls_fingerprint": "firefox",
   "tls_passthrough": [],
   "capture_scope": {},
   "intercept_rules": {},
@@ -63,11 +63,13 @@ The TCP address the proxy listens on.
 
 ### `upstream_proxy`
 
-Upstream proxy URL for proxy chaining. Supports HTTP and SOCKS5 proxy URLs.
+Upstream proxy for proxy chaining on the live MITM data path. Supports HTTP and SOCKS5 proxy URLs. The value is either a plain URL string or a structured object that enables per-listener IP rotation.
 
 | Type | Default |
 |------|---------|
-| `string` | `""` (direct connection) |
+| `string` or `object` | `""` (direct connection) |
+
+**String form** -- a single static upstream:
 
 ```json
 {
@@ -75,13 +77,34 @@ Upstream proxy URL for proxy chaining. Supports HTTP and SOCKS5 proxy URLs.
 }
 ```
 
+**Object form** -- static URL or rotating template:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | `string` | Literal upstream URL (`http://` or `socks5://`). Mutually exclusive with `url_template`. `rotation` is not allowed with `url` |
+| `url_template` | `string` | URL template expanded by the macro engine. `§__nonce§` expands to a fresh UUID per resolution (useful for residential-proxy session rotation). Requires `rotation` |
+| `rotation.policy` | `string` | How often the template is re-expanded: `per_request` (every outbound dial), `per_connection` (once per inbound client connection), `per_target_host` (once per upstream host), `sticky` (once for the listener's lifetime) |
+
+```json
+{
+  "upstream_proxy": {
+    "url_template": "http://user-session-§__nonce§:pass@gw.residential.example:8000",
+    "rotation": {"policy": "per_target_host"}
+  }
+}
+```
+
+The template is probe-expanded at load time, so a malformed template (wrong scheme, missing port, CR/LF) fails at startup rather than at the first dial. See [Upstream proxy](upstream-proxy.md#ip-rotation) for details.
+
 ### `tls_fingerprint`
 
-TLS ClientHello fingerprint profile for upstream HTTPS connections. Uses uTLS to mimic a browser's TLS fingerprint, evading JA3/JA4-based bot detection.
+TLS ClientHello fingerprint profile for upstream HTTPS connections. Uses uTLS to mimic a browser's TLS fingerprint, evading JA3/JA4-based bot detection. The upstream HTTP/2 connection preface (SETTINGS, WINDOW_UPDATE, pseudo-header order) follows the same profile.
 
 | Type | Default | Valid values |
 |------|---------|-------------|
-| `string` | `""` (Go default TLS) | `chrome`, `firefox`, `safari`, `edge`, `random`, `none` |
+| `string` | `"firefox"` | `firefox`, `chrome`, `safari`, `edge`, `random`, `none` |
+
+Empty or omitted resolves to `firefox`. Use `none` to opt out of spoofing and use Go's standard `crypto/tls`. Values are case-insensitive; an unknown value fails config load.
 
 ```json
 {
@@ -399,10 +422,10 @@ Each rule is either a **preset reference** or a **custom rule**. The two are mut
 
 ## Target scope policy (`target_scope_policy`)
 
-Target scope policy rules control which network targets the proxy is allowed to access. These rules are part of the Policy Layer and are immutable at runtime.
+Target scope policy rules control which network targets the proxy is allowed to access. These rules are part of the Policy Layer: MCP tools cannot change them. Only the operator can replace them at runtime, by editing the source file and sending `SIGHUP` to the server (see [Signals](cli-flags.md#signals)).
 
 !!! note
-    When a dedicated policy file is specified via `-target-policy-file` / `YP_TARGET_POLICY_FILE`, the `target_scope_policy` section in the config file is ignored.
+    When a dedicated policy file is specified via `-target-policy-file` / `YP_TARGET_POLICY_FILE`, the `target_scope_policy` section in the config file is ignored. It is still validated at load.
 
 ### Structure
 
@@ -419,10 +442,17 @@ All non-empty fields must match for a rule to apply (AND logic).
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `hostname` | `string` | Target hostname (case-insensitive). Supports `*.example.com` wildcard |
-| `ports` | `int[]` | Restrict to specific port numbers. Empty = all ports |
-| `path_prefix` | `string` | Match the beginning of the URL path (case-sensitive). Empty = all paths |
-| `schemes` | `string[]` | Restrict to specific URL schemes (e.g., `http`, `https`). Empty = all schemes |
+| `hostname` | `string` | Target hostname (case-insensitive). Supports `*.example.com` wildcard, IPv4 literals, and IPv6 literals bare (`::1`) or bracketed (`[::1]`). Empty = any host |
+| `ports` | `int[]` | Restrict to specific port numbers (`1`-`65535`). Empty = all ports |
+| `path_prefix` | `string` | Literal, case-sensitive prefix of the URL path (not a glob). Must start with `/`. Empty = all paths |
+| `schemes` | `string[]` | `http` (plaintext) or `https` (TLS), case-insensitive. WebSocket and raw TCP traffic is scoped as `http` / `https` too. Empty = all schemes |
+
+Rules are validated at load. A rule that could never match — which would silently turn a deny into a no-op — is rejected with an error:
+
+- `hostname` with a trailing dot (`internal.corp.`), a port (`host:443`), a URL, or a wildcard over an IP literal (`*.10.0.0.1`)
+- `path_prefix` without a leading `/`, or containing `*`, `?`, or `#` (write `/api/`, not `/api/*`)
+- `schemes` values other than `http` / `https`, including `""`
+- negative `rate_limits` or `budget` values
 
 ### Rate limits (`rate_limits`)
 
@@ -467,7 +497,7 @@ Diagnostic session budgets to prevent runaway AI agents.
 }
 ```
 
-You can also store target scope policy in a separate file and load it with `-target-policy-file`. The file format is the same as the `target_scope_policy` section:
+You can also store target scope policy in a separate file and load it with `-target-policy-file`. The file format is the same as the `target_scope_policy` section. Decoding is strict: the file must be a single JSON object, and an unknown key (for example a misspelled `"denys"`) is rejected instead of loading as an empty, allow-all policy.
 
 ```json
 {
@@ -567,7 +597,7 @@ A comprehensive configuration demonstrating all available sections:
 {
   "listen_addr": "127.0.0.1:8080",
   "upstream_proxy": "http://proxy.corp.example:3128",
-  "tls_fingerprint": "chrome",
+  "tls_fingerprint": "firefox",
   "tls_passthrough": ["*.google.com"],
   "capture_scope": {
     "include": ["*.target.com"],

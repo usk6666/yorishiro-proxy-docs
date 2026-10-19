@@ -14,10 +14,23 @@ Each protocol has its own typed fuzz tool: [`fuzz_http`](../tools/fuzz-http.md),
 ## Limits
 
 - Maximum variants per call: **1000** (cartesian product across all positions)
-- Maximum positions per call (HTTP): **32**
+- Maximum positions per call: **32**
 - Maximum decoded payload size per position: **1 MiB**
 
 The variant sequence is the cartesian product of all positions' payloads. Each variant is executed sequentially with a fresh dial.
+
+### Per-variant gates
+
+Right before each variant is sent, its post-substitution message is checked against the current [target scope](target-scope.md) and then the [SafetyFilter](safety-filter.md). Because the check runs per variant:
+
+- Positions that rewrite scope-relevant fields (`fuzz_http` `authority` / `scheme` / `path` / `raw_query`, `fuzz_grpc` `service` / `method`) are judged on their mutated value, not only on the base request
+- A scope change made mid-run -- an agent [`security`](../tools/security.md) call or a `SIGHUP` policy reload -- applies from the next variant on
+
+A blocked variant is recorded with an `error` and no flow, and the run continues.
+
+### HTTP/2 flows
+
+`fuzz_http` sends every variant over the recorded flow's protocol: a flow captured over HTTP/2 is fuzzed over HTTP/2. Override it with `http_version` (`http/1.1`, `h2`, `h2c`). See [`fuzz_http`](../tools/fuzz-http.md#wire-protocol).
 
 ## Position definitions
 
@@ -216,9 +229,55 @@ Each variant's full request and response are stored under its `stream_id`. Use t
 
 The fuzz response itself includes per-variant `status_code`, `body_size`, `duration_ms`, payload map, and any `error` -- enough to triage results without an extra round trip.
 
-## Authentication refresh
+## Macro hooks
 
-Per-call macro hooks (`pre_send` / `post_receive`) have been removed. To refresh authentication mid-campaign, split the run into chunks and call your auth-refresh macro between chunks from the client side. See [Macros](macros.md) for the standalone macro execution model.
+Every typed fuzz tool accepts `pre_macro` and `post_macro` hooks that run a stored [macro](macros.md) around the variants. Use them to log in, refresh a session, tear down state, or react to specific responses without leaving the fuzz call.
+
+```json
+// fuzz_http
+{
+  "flow_id": "abc-123",
+  "headers": [
+    {"name": "Authorization", "value": "Bearer §session_token§"}
+  ],
+  "positions": [
+    {"path": "raw_query", "payloads": ["id=1", "id=2", "id=3"]}
+  ],
+  "pre_macro": {"name": "login-once", "scope": "job"},
+  "post_macro": {"name": "alert-on-auth", "run_interval": "on_status", "status_codes": [401, 403]}
+}
+```
+
+Key concepts:
+
+- **`scope`** -- `"iteration"` (default) runs the hook around every variant with a fresh KV Store per variant. `"job"` runs it once before (pre) or after (post) the whole loop with a KV Store shared by every variant. `pre_macro` and `post_macro` can use different scopes.
+- **`run_interval`** -- per-variant cadence (`scope="iteration"` only). `pre_macro`: `always`, `once`, `every_n` (with `n`), `on_error`. `post_macro`: `always`, `on_status` (with `status_codes`), `on_match` (with `match_pattern`).
+- **`on_error`** -- what a failing hook does: `skip` (default) skips the variant (or the whole job for a job-scope `pre_macro`), `abort` stops the run, `continue` proceeds anyway.
+- **`vars`** -- static KV Store overrides for the hook. Keys starting with `__` are reserved and silently dropped.
+- **Reserved response keys** -- an iteration-scope `post_macro` sees the variant's response as `__response_*` keys. The key set is protocol-specific (for example, `fuzz_grpc` uses gRPC status codes `0`-`16`, and `fuzz_raw` has no status at all).
+
+Supplying `headers` replaces the inherited header list, so include every header the request needs (the example above is abbreviated). `fuzz_http` expands `§var§` templates in the base request and position payloads, and `fuzz_ws` expands them in position payloads, so values a `pre_macro` extracts flow straight into the variants. `fuzz_grpc` and `fuzz_raw` do not expand templates in the request.
+
+See [`fuzz_http`](../tools/fuzz-http.md#macro-hooks) for the full field reference and the per-protocol differences on [`fuzz_ws`](../tools/fuzz-ws.md#macro-hooks), [`fuzz_grpc`](../tools/fuzz-grpc.md#macro-hooks), and [`fuzz_raw`](../tools/fuzz-raw.md#macro-hooks).
+
+## Upstream proxy rotation
+
+`fuzz_http` can send each variant through a different upstream proxy -- typically a residential proxy pool that assigns a new exit IP per session ID. The `upstream_proxy.url_template` is re-expanded per variant with `§__iteration§` (variant index) and `§__nonce§` (fresh UUID):
+
+```json
+// fuzz_http
+{
+  "flow_id": "abc-123",
+  "positions": [
+    {"path": "body", "payloads": ["{\"pin\":\"0000\"}", "{\"pin\":\"0001\"}"]}
+  ],
+  "upstream_proxy": {
+    "url_template": "http://user-session-§__nonce§:password@residential.example:8080"
+  }
+}
+```
+
+See [`fuzz_http`](../tools/fuzz-http.md#upstream-proxy-rotation) and [Upstream proxy](../configuration/upstream-proxy.md).
 
 ## Practical use cases
 
@@ -286,4 +345,6 @@ For exhaustive enumerations like 4-digit PINs, generate the candidate list clien
 
 - [fuzz_http](../tools/fuzz-http.md), [fuzz_ws](../tools/fuzz-ws.md), [fuzz_grpc](../tools/fuzz-grpc.md), [fuzz_raw](../tools/fuzz-raw.md) -- typed per-protocol fuzz MCP tools
 - [Resender](resender.md) -- Single request resend with mutations
+- [Macros](macros.md) -- Multi-step macros used by `pre_macro` / `post_macro`
+- [Target scope](target-scope.md) -- Scope rules enforced on every variant
 - [Built-in codecs](../reference/built-in-codecs.md) -- Available encoding codecs

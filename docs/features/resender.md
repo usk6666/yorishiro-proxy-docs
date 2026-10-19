@@ -229,6 +229,20 @@ Each protocol has its own typed resend tool:
 | gRPC | [`resend_grpc`](../tools/resend-grpc.md) |
 | Raw TCP / TLS | [`resend_raw`](../tools/resend-raw.md) |
 
+### HTTP/2 resend
+
+A flow recorded over HTTP/2 is resent over HTTP/2 by default: `h2` (TLS, ALPN) for `https`, `h2c` (prior knowledge) for `http`. Use `http_version` to choose explicitly (`"http/1.1"`, `"h2"`, or `"h2c"`). If the upstream does not negotiate `h2`, the call fails with an error naming the negotiated ALPN instead of silently falling back. See [Wire protocol](../tools/resend-http.md#wire-protocol-http11-vs-http2).
+
+```json
+// resend_http
+{
+  "flow_id": "h2-flow-123",
+  "http_version": "http/1.1"
+}
+```
+
+For `resend_grpc`, TLS is decided from the transport the recorded flow actually used, not from the declared `:scheme`.
+
 ### WebSocket resend
 
 For WebSocket flows, use `resend_ws`. Each call dials a fresh upstream, performs the upgrade dance, sends one frame, and records the response:
@@ -264,6 +278,7 @@ To send from scratch (no recorded flow), supply `target_addr`, `scheme`, and `pa
 | `target_addr` | string | (WS / raw) Upstream `host:port` for the dial |
 | `timeout_ms` | integer | Per-call timeout in milliseconds (default: `30000`) |
 | `tag` | string | Tag stored on the new stream's `Tags` map |
+| `upstream_proxy` | object | (HTTP) Route this call through an upstream proxy. `url_template` supports `§__nonce§` (fresh UUID per call) for residential-proxy IP switching. See [Upstream proxy](../configuration/upstream-proxy.md#per-iteration-rotation-in-resend-and-fuzz) |
 
 `follow_redirects` is no longer auto-followed -- chase redirects from the client side by inspecting the response and issuing a new resend.
 

@@ -28,7 +28,17 @@ A matched envelope is parked in the **HoldQueue** (`internal/rules/common.HoldQu
 
 The queue is bounded (default 100 items) and time-bounded (default 5 minutes). When either limit is hit, the configured timeout behavior runs (`auto_release` or `auto_drop`).
 
-When you choose **modify-and-forward**, the user-modified envelope is re-evaluated by `SafetyStep` before being released downstream. This closes the gap where an operator-injected payload could bypass the input filter that gated the original held envelope (USK-702).
+### Release-time re-checks
+
+Every release — manual `release`, timeout auto-release, and `modify_and_forward` — first re-runs the target scope check against the envelope about to be forwarded (the modified one for `modify_and_forward`), using the rules in force at release time. A deny added while the item was held (a `SIGHUP` policy reload or a `security` change), or a rewrite of the authority / path to a denied target, blocks the release: an HTTP request gets `403` with `blocked_by: target_scope`, a WebSocket / gRPC message is dropped, and the block is recorded as a flow. The `intercept` call itself still succeeds.
+
+When you choose **modify-and-forward**, the user-modified envelope is then re-evaluated by `SafetyStep` before being released downstream. This closes the gap where an operator-injected payload could bypass the input filter that gated the original held envelope (USK-702).
+
+If a policy change revokes the connection while an item is held, the connection is closed only after the hold resolves and its result is recorded.
+
+### Cancelled holds
+
+If a hold ends without an `intercept` action because the connection or proxy went away (`proxy_stop`, session teardown, or the peer direction failing), the held request is recorded as an audit stream with state `error` and `blocked_by: intercept_cancelled`. Its stream ID equals the held entry's `stream_id`, so you can find it with `query` instead of it silently disappearing.
 
 ## Configuring intercept rules
 
@@ -152,7 +162,7 @@ Modify the intercepted item before forwarding. The available mutation parameters
 
 ### Drop
 
-Discard the intercepted item. For requests, this returns a 502 Bad Gateway response to the client:
+Discard the intercepted item. For HTTP requests, this returns a `403 Forbidden` response (`blocked_by: intercept_drop`) to the client; a WebSocket frame is discarded. Dropping a native gRPC request item (start or a client message) ends the RPC with `grpc-status: 7` (`PERMISSION_DENIED`) and `grpc-message: blocked by intercept_drop`:
 
 ```json
 // intercept

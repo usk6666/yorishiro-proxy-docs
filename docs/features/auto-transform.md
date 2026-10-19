@@ -27,7 +27,7 @@ The configuration shapes documented below target the HTTP engine. WebSocket and 
 
 ### Where auto-transform runs
 
-`TransformStep` sits after Intercept in the canonical Pipeline chain (`HostScope → HTTPScope → Safety → PluginPre → Intercept → Transform → Macro → PluginPost → Record`), so transforms apply to the live envelope after any operator hold/release decision. Resend and Macro fan-out paths bypass `PluginPre` and `Intercept` but still traverse `Transform → Macro → PluginPost → Record`, so synthesized requests pick up the same transforms as proxied traffic.
+`TransformStep` sits after Intercept in the canonical Pipeline chain (`HostScope → HTTPScope → Budget → Safety → PluginPre → Intercept → Transform → PluginPost → Record`), so transforms apply to the live envelope after any operator hold/release decision. Resend and Macro fan-out paths bypass `PluginPre` and `Intercept` but still traverse `Transform → PluginPost → Record`, so synthesized requests pick up the same transforms as proxied traffic.
 
 ## Rule definition
 

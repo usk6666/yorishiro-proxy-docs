@@ -69,9 +69,11 @@ The header shows:
 
 Two rule tables are displayed:
 
+The two filters run at different layers and serve different purposes. Each table carries a short description that spells this out:
+
 ### Input filter rules
 
-Rules that inspect outgoing requests to prevent dangerous operations. Each rule shows:
+The Input Filter blocks Send-direction payloads on the live wire before they reach the upstream server. Recommended presets: `destructive-sql`, `destructive-os-command`. Each rule shows:
 
 - **Name** -- Rule identifier
 - **Pattern** -- Regex or match pattern
@@ -81,9 +83,9 @@ Rules that inspect outgoing requests to prevent dangerous operations. Each rule 
 
 ### Output filter rules
 
-Rules that filter incoming responses to redact sensitive data. Output rules additionally show:
+The Output Filter masks sensitive bytes only when an MCP tool returns a recorded flow to the AI agent. The wire copy delivered to the DB, browser, and next hop is never modified. Recommended presets: `credit-card`, `japan-my-number`. Output rules additionally show:
 
-- **Replacement** -- The text that replaces matched content
+- **Replacement** -- The text that replaces matched content in the MCP tool response
 
 ## Rate limits
 
@@ -104,8 +106,10 @@ Read-only display of rate limits from the configuration file (marked "Immutable"
 
 Editable rate limits that you can adjust at runtime. Click **Edit** to modify:
 
-- **Global RPS** -- Enter a value or leave blank for no limit
-- **Per-Host RPS** -- Enter a value or leave blank for no limit
+- **Global RPS** -- Maximum requests per second; `0` means no limit
+- **Per-Host RPS** -- Maximum requests per second per host; `0` means no limit
+
+The form prefills the current agent values as-is, so an explicit `0` (unlimited) is shown as `0` rather than an empty field and survives **Cancel**.
 
 Click **Save** to apply or **Cancel** to discard changes.
 
@@ -135,7 +139,7 @@ Read-only budget limits from the configuration file.
 
 Editable budget overrides. Click **Edit** to modify:
 
-- **Max total requests** -- Maximum number of requests allowed (whole number)
+- **Max total requests** -- Maximum number of requests allowed (whole number); `0` means no limit and is prefilled as `0`
 - **Max duration** -- Maximum session duration in Go duration format (e.g., `30m`, `1h`, `1h30m`)
 
 Click **Save** to apply or **Cancel** to discard changes.

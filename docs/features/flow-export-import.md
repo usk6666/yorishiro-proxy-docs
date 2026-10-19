@@ -2,6 +2,17 @@
 
 You can export recorded flows to share with other tools or team members, and import flows from previous sessions. yorishiro-proxy supports three export formats: JSONL, HAR 1.2, and cURL commands.
 
+## Export directory
+
+File paths in `export_flows` (`output_path`) and `import_flows` (`input_path`) are confined to the server's **export directory** — by default `~/.yorishiro-proxy/exports`, configurable with the [`-export-dir`](../configuration/cli-flags.md#export-directory-export-dir) server flag or `YP_EXPORT_DIR`.
+
+- Relative paths resolve against the export directory, not against your working directory or the server's.
+- Absolute paths are accepted only if they lie inside the export directory. Anything else — `../` escapes, symlinks pointing outside, absolute paths elsewhere — is rejected.
+- The response's `output_path` (and the import result's `source`) is the absolute path of the file.
+- `query` with `resource: "status"` reports the directory as `export_dir`.
+
+This prevents an MCP caller from overwriting operator-owned files such as the policy file, config file, CA key pair, or flow database through an export.
+
 ## Export formats
 
 ### JSONL format
@@ -14,7 +25,7 @@ JSONL (JSON Lines) is the native export format. Each line is a complete JSON obj
   "action": "export_flows",
   "params": {
     "format": "jsonl",
-    "output_path": "/tmp/flows.jsonl"
+    "output_path": "flows.jsonl"
   }
 }
 ```
@@ -41,7 +52,7 @@ HAR (HTTP Archive) 1.2 is a standard format compatible with browser DevTools, Bu
   "action": "export_flows",
   "params": {
     "format": "har",
-    "output_path": "/tmp/flows.har"
+    "output_path": "flows.har"
   }
 }
 ```
@@ -79,7 +90,7 @@ Apply filters to export a subset of flows:
       "time_after": "2026-02-01T00:00:00Z",
       "time_before": "2026-02-28T23:59:59Z"
     },
-    "output_path": "/tmp/api-flows.jsonl"
+    "output_path": "api-flows.jsonl"
   }
 }
 ```
@@ -104,7 +115,7 @@ Export flow metadata without message bodies for a lightweight overview:
   "params": {
     "format": "jsonl",
     "include_bodies": false,
-    "output_path": "/tmp/flows-meta.jsonl"
+    "output_path": "flows-meta.jsonl"
   }
 }
 ```
@@ -118,7 +129,7 @@ Import flows from a JSONL file. Each line must be a valid export record with ver
 {
   "action": "import_flows",
   "params": {
-    "input_path": "/tmp/flows.jsonl"
+    "input_path": "flows.jsonl"
   }
 }
 ```
@@ -137,7 +148,7 @@ When importing flows with IDs that already exist in the store, use `on_conflict`
 {
   "action": "import_flows",
   "params": {
-    "input_path": "/tmp/flows.jsonl",
+    "input_path": "flows.jsonl",
     "on_conflict": "replace"
   }
 }
@@ -168,7 +179,7 @@ Export HTTPS flows to HAR for analysis in Burp Suite:
   "params": {
     "format": "har",
     "filter": {"protocol": "HTTPS"},
-    "output_path": "/tmp/analysis.har"
+    "output_path": "analysis.har"
   }
 }
 ```
@@ -183,7 +194,7 @@ Export all flows from a testing session:
   "action": "export_flows",
   "params": {
     "format": "jsonl",
-    "output_path": "/tmp/session-backup.jsonl"
+    "output_path": "session-backup.jsonl"
   }
 }
 ```
@@ -197,7 +208,7 @@ Import a previous session's flows:
 {
   "action": "import_flows",
   "params": {
-    "input_path": "/tmp/session-backup.jsonl",
+    "input_path": "session-backup.jsonl",
     "on_conflict": "skip"
   }
 }
@@ -217,7 +228,7 @@ Export flows from a specific time window:
       "time_after": "2026-03-14T09:00:00Z",
       "time_before": "2026-03-14T17:00:00Z"
     },
-    "output_path": "/tmp/today.jsonl"
+    "output_path": "today.jsonl"
   }
 }
 ```

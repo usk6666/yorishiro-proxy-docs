@@ -125,29 +125,29 @@ When a `tcp_forwards` entry sets `protocol` to `auto` (the default) the proxy pe
 
 ## Canonical pipeline
 
-The Pipeline is a fixed 8-step chain that runs on every Envelope. Plugin handling is split across two steps (`PluginPre` before Intercept, `PluginPost` after Macro), so the diagram shows nine boxes for one chain.
+The Pipeline is a fixed chain that runs on every Envelope. Plugin handling is split across two steps (`PluginPre` before Intercept, `PluginPost` after Transform). An `UpgradeStep` is appended after Record to perform the WebSocket / SSE layer swap.
 
 ```mermaid
 flowchart LR
     HS[HostScope] --> HTS[HTTPScope]
-    HTS --> SF[Safety]
+    HTS --> BU[Budget]
+    BU --> SF[Safety]
     SF --> PRE[PluginPre]
     PRE --> INT[Intercept]
     INT --> TR[Transform]
-    TR --> MA[Macro]
-    MA --> POST[PluginPost]
+    TR --> POST[PluginPost]
     POST --> REC[Record]
 ```
 
 | Step | Source file | Purpose |
 |------|-------------|---------|
-| HostScope | `internal/pipeline/host_scope_step.go` | Drop envelopes outside the configured host scope |
-| HTTPScope | `internal/pipeline/http_scope_step.go` | Apply HTTP-specific scope filters (path, method, content-type) |
-| Safety | `internal/pipeline/safety_step.go` | Run Safety Filter Engine (input/output destructive-pattern + PII presets) |
+| HostScope | `internal/pipeline/host_scope_step.go` | Drop Send envelopes whose connection target is outside the target scope (scheme derived from the connection's TLS state) |
+| HTTPScope | `internal/pipeline/http_scope_step.go` | Apply target scope to the HTTP request (host, port, path, scheme) |
+| Budget | `internal/pipeline/budget_step.go` | Charge the diagnostic budget; stop over-budget envelopes before the expensive Steps |
+| Safety | `internal/pipeline/safety_step.go` | Run the Safety Input Filter (destructive-pattern presets) on Send envelopes |
 | PluginPre | `internal/pipeline/plugin_step_pre.go` | Dispatch `(protocol, event, phase=pre)` Starlark hooks |
-| Intercept | `internal/pipeline/intercept_step.go` | Hold queue + manual edit for matched envelopes |
+| Intercept | `internal/pipeline/intercept_step.go` | Hold queue + manual edit for matched envelopes; re-checks scope (and Safety for `modify_and_forward`) on release |
 | Transform | `internal/pipeline/transform_step.go` | Per-protocol auto-rewrite rules |
-| Macro | `internal/pipeline/macro_step` (via job runner) | Macro engine: template / guard / extract / encoder |
 | PluginPost | `internal/pipeline/plugin_step_post.go` | Dispatch `(protocol, event, phase=post)` hooks |
 | Record | `internal/pipeline/record_step.go` | Persist Envelope (original + variant) to the Stream/Flow store |
 
@@ -158,7 +158,7 @@ Steps dispatch by type-switch on `env.Message`, so a step that only operates on 
 Replay paths do not re-run Safety, PluginPre, or Intercept. Resend, Macro fan-out, and any synthesized Send envelope traverse a shorter chain:
 
 ```
-Transform → Macro → PluginPost → Record → Layer encode
+Transform → PluginPost → Record → Layer encode
 ```
 
 This keeps replayed traffic from being re-held by interceptors and from re-firing pre-phase hooks that already ran on the original envelope. The Layer encode step at the tail is performed via the `WireEncoderRegistry` (`internal/pipeline/wire_encoder_registry.go`), which selects the per-protocol encoder for the outbound bytes.

@@ -13,7 +13,7 @@ Configure runtime security settings including target scope rules, rate limits, d
 
 Target scope, rate limits, and budgets use a two-layer architecture:
 
-- **Policy Layer** (immutable) -- set at startup from the configuration file. Defines the upper boundary. Cannot be modified at runtime.
+- **Policy Layer** (immutable by the agent) -- set at startup from `-target-policy-file`, or else the config file's `target_scope_policy` section. Defines the upper boundary. No MCP tool can modify it; only the operator can replace it at runtime with a [`SIGHUP` reload](#reloading-the-policy-layer-operator-only). Policy rules are validated at startup with the same rules as this tool (except that a policy rule may omit `hostname`), and an invalid policy stops the server instead of loading a rule that silently matches nothing.
 - **Agent Layer** (mutable) -- controlled by this tool. Can further restrict access within Policy Layer boundaries.
 
 ### Evaluation order (target scope)
@@ -25,6 +25,34 @@ Target scope, rate limits, and budgets use a two-layer architecture:
 5. All checks passed -- allow
 
 When neither layer has rules, all targets are permitted (open mode).
+
+### Where target scope applies
+
+A single shared evaluator applies both layers to **all** traffic:
+
+| Traffic source | Deny symptom |
+|----------------|--------------|
+| HTTPS via CONNECT tunnel | The proxy returns `200 Connection Established`, then closes the connection; the client's inner TLS handshake fails with EOF |
+| Plain-HTTP forward proxy | `403 Forbidden` with body `yorishiro-proxy: target blocked by scope` |
+| MCP tool requests (`resend_*`, `fuzz_*`, `macro`) | MCP error response with the violation reason. Fuzz jobs re-check scope for every variant they send |
+| Intercept release (`release`, `modify_and_forward`, timeout auto-release) | The `intercept` call succeeds, but scope is checked again at release time against the request actually forwarded (for `modify_and_forward`, the modified one). An HTTP request gets `403 Forbidden` with body `{"error":"blocked by target_scope","blocked_by":"target_scope"}`, a WebSocket / gRPC message is dropped, and the block is recorded as a flow with `blocked_by: target_scope` |
+
+After `set_target_scope`, `update_target_scope`, or a policy reload, live connections that an identical new connection would no longer be admitted for are closed. A connection with held intercepts is revoked at once (new requests get `403`) but closed only after its holds resolve. A deny that only names a `path_prefix` closes no connection; it is enforced per request.
+
+### Reloading the Policy Layer (operator only)
+
+The operator can replace the running Policy Layer -- target scope `allows` / `denies`, `rate_limits`, and `budget` together -- by editing the policy source and sending the server process `SIGHUP` (Unix only). There is deliberately no MCP action for this.
+
+- **Enabled only with a policy source** -- the handler is installed only when the server was started with `-target-policy-file` or `-config`. Without either, `SIGHUP` terminates the process as before. Wait for the Info log line `target scope policy reload enabled` before signaling.
+- **Terminal hangup** -- closing the launching terminal also sends `SIGHUP`, which now triggers a reload instead of stopping the server. Stop it explicitly with `SIGTERM` or `SIGINT`.
+- **Full, atomic replacement** -- the new source is validated completely before anything changes. A section omitted from the new file is cleared. On any validation error, the previous policy stays in force and `target scope policy reload rejected; previous policy retained` is logged.
+- **Prefer `-target-policy-file` for live edits** -- it is decoded strictly, so a misspelled field rejects the reload. The `-config` source is decoded leniently, so a typo can reload as "no policy"; a Warn line reports when a reload drops every allow and deny rule.
+- **Agent Layer** -- agent rules are kept unchanged. An agent allow rule the new policy no longer covers simply stops matching, so narrowing the policy never widens what the agent can reach.
+- **Budget** -- the request counter is not reset; the duration limit is re-armed against the new value from the original session start.
+- **Audit** -- a successful reload logs `target scope policy reloaded` with the source path, file `sha256`, and rule counts. `get_target_scope` reports `source` and `loaded_at`.
+
+!!! warning "Protect the policy file"
+    Keep the policy file in a directory that neither the proxy's user nor the agent can write, and never where `manage` export can write.
 
 ## Actions
 
@@ -103,16 +131,29 @@ Returns Policy and Agent Layer budgets with effective values and current usage. 
 
 Returns the current SafetyFilter configuration and rules (read-only). SafetyFilter rules are part of the Policy Layer and cannot be modified at runtime. No parameters.
 
+When the Input Filter blocks a native gRPC call, the RPC fails with `grpc-status: 7` (`PERMISSION_DENIED`) and `grpc-message: blocked by safety_filter`; the matched rule IDs travel comma-separated in the `x-yorishiro-matched-rules` trailer. A blocked message in a bidi or client stream ends the whole RPC. gRPC-Web messages are dropped without a status.
+
 ## Target rule fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `hostname` | string | Yes | Exact match or wildcard `*.example.com` |
+| `hostname` | string | Yes | Exact match or wildcard `*.example.com`. IPv4 and IPv6 literals are accepted; IPv6 may be bare (`::1`) or bracketed (`[::1]`), and every zone-less form of one address is the same host. A wildcard over an IP literal is rejected |
 | `ports` | integer[] | No | Match specific ports. Empty = all ports |
-| `path_prefix` | string | No | Match URL path prefix. Empty = all paths |
-| `schemes` | string[] | No | Match URL schemes (`http`, `https`). Empty = all schemes |
+| `path_prefix` | string | No | Literal, case-sensitive prefix of the request path (not a glob). Must start with `/`; `*`, `?`, and `#` are rejected. Matches when either the wire-form path or its percent-decoded form starts with the prefix (`/admin` also matches `/%61dmin`). Empty = all paths |
+| `schemes` | string[] | No | Transport confidentiality: `http` = plaintext, `https` = TLS. No other value is accepted. Empty = both. See [What schemes means](#what-schemes-means) |
 
 All specified fields must match for a rule to apply (AND logic).
+
+### What `schemes` means
+
+`schemes` is a **transport confidentiality** axis, not an application-protocol axis. It applies to every protocol the proxy scopes:
+
+- A WebSocket target matches as `http` (`ws://`) or `https` (`wss://`). `"schemes": ["ws"]` is rejected.
+- A raw TCP or gRPC target matches as `https` when the leg is TLS-terminated, and `http` when it is cleartext.
+- A `CONNECT` tunnel matches as `https`, even if it turns out to carry another protocol.
+- SOCKS5 targets are scope-checked before the tunnel carries any byte, so no `schemes`-bearing rule matches them. Scope them by `hostname` / `ports`.
+
+A `schemes` condition narrows a rule in **both directions**: a deny rule with `"schemes": ["https"]` does not block the plaintext dial to the same host, and an allow rule with `"schemes": ["https"]` does not permit one. Omit `schemes` when you mean "this host, on any transport" -- the safer default for deny rules.
 
 ## Response formats
 
@@ -129,7 +170,7 @@ All specified fields must match for a rule to apply (AND logic).
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `policy` | object | Policy Layer: `allows`, `denies`, `source`, `immutable` |
+| `policy` | object | Policy Layer: `allows`, `denies`, `source`, `loaded_at`, `immutable` |
 | `agent` | object | Agent Layer: `allows`, `denies` |
 | `effective_mode` | string | `"open"` or `"enforcing"` |
 

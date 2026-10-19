@@ -137,7 +137,7 @@ This is the lever for HTTP request smuggling, malformed-frame injection, and oth
 | Attribute               | Type                  | Description                                                                  |
 |-------------------------|-----------------------|------------------------------------------------------------------------------|
 | `ctx.client_addr`       | string or `None`      | Client IP (no port). `None` for events with no client connection.            |
-| `ctx.tls`               | dict (frozen) or `None` | TLS snapshot: `sni`, `alpn`, `version_name`, `cipher_name`, `peer_cert_subject`, `client_fingerprint`. `None` when no TLS layer is in the stack. |
+| `ctx.tls`               | dict (frozen) or `None` | TLS snapshot: `sni`, `alpn`, `version_name`, `cipher_name`, `peer_cert_subject`, `client_fingerprint`, `ja3`, `ja4`. `ja3` / `ja4` are the client ClientHello fingerprints (MITM only; `client_fingerprint` mirrors `ja4`). `None` when no TLS layer is in the stack. |
 | `ctx.transaction_state` | scoped dict           | Per-request/response (HTTP) or per-channel (streaming) KV.                   |
 | `ctx.stream_state`      | scoped dict           | Per-stream KV (`(ConnID, StreamID)`).                                        |
 

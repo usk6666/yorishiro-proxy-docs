@@ -13,7 +13,7 @@ The page has two tabs:
 
 ## Intercept queue
 
-The Queue tab displays a table of all currently intercepted items. The queue polls every second for new entries. Each row shows:
+The Queue tab displays a table of all currently intercepted items. The queue polls every second while items are pending and backs off to every 5 seconds while it is empty. Polling pauses entirely while the browser tab is hidden and refreshes immediately when you return to it. Each row shows:
 
 | Column | Description |
 |--------|-------------|
@@ -121,7 +121,7 @@ The byte size of the raw payload is shown next to the "Raw Bytes" section title.
 
 ### Actions
 
-Three action buttons appear in the detail header:
+Three action buttons appear in the detail header. While an action is in flight, all three buttons are disabled so a double click can't act on the same item twice; after the action completes, the selection is cleared once the queue has been refetched.
 
 #### Release
 

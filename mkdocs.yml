@@ -8,18 +8,20 @@ repo_url: https://github.com/usk6666/yorishiro-proxy
 
 theme:
   name: material
+  logo: images/yorishiro-proxy-icon-dark.svg
+  favicon: images/yorishiro-proxy-icon.svg
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: deep purple
-      accent: purple
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: deep purple
-      accent: purple
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -95,6 +97,7 @@ nav:
       - security: tools/security.md
       - grpc_schema: tools/grpc-schema.md
       - plugin_introspect: tools/plugin-introspect.md
+      - docs: tools/docs.md
   - Features:
       - Resender: features/resender.md
       - Fuzzer: features/fuzzer.md
@@ -146,6 +149,9 @@ nav:
   - Reference:
       - Built-in codecs: reference/built-in-codecs.md
       - Changelog: reference/changelog.md
+
+extra_css:
+  - stylesheets/extra.css
 
 extra:
   social:

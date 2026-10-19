@@ -29,7 +29,7 @@ Unified information query tool. Retrieve flows, flow details, messages, proxy st
 | `method` | string | flows | HTTP method filter (e.g. `"GET"`, `"POST"`) |
 | `url_pattern` | string | flows | URL substring match |
 | `status_code` | integer | flows, fuzz_results | HTTP status code filter |
-| `blocked_by` | string | flows | Blocked flow filter (e.g. `"target_scope"`, `"intercept_drop"`, `"safety_filter"`) |
+| `blocked_by` | string | flows | Blocked flow filter: `"target_scope"`, `"intercept_drop"`, `"intercept_cancelled"`, `"rate_limit"`, `"safety_filter"`, `"budget"`, or `"capacity"`. See [Blocked flows](#blocked-flows) |
 | `state` | string | flows | Flow lifecycle state (`"active"`, `"complete"`, `"error"`) |
 | `conn_id` | string | flows | Connection ID filter (exact match) |
 | `host` | string | flows | Host filter (matches server_addr or request URL host) |
@@ -108,7 +108,37 @@ Flow state values:
 
 For streaming flows (`flow_type` != `"unary"`), the response includes `message_preview` (first 10 messages) and `message_count`. Use the `messages` resource with `limit`/`offset` to page through all messages.
 
-When intercept/transform modifies a request, the `original_request` field contains the pre-modification request data.
+When intercept/transform modifies a request, the `original_request` field contains the pre-modification request data, including a `body_truncated` flag.
+
+For TLS connections, `conn_info` carries the client's ClientHello fingerprints as `tls_client_ja3` and `tls_client_ja4`, alongside `tls_version`, `tls_cipher`, `tls_alpn`, and `tls_server_cert_subject`.
+
+The `url` field (in `flow`, `flows[]`, `messages[]`, and `original_request`) carries the request path in **wire form** -- percent-encoding exactly as sent, not decoded. Because a JSON string cannot carry invalid UTF-8, any such path or query bytes are shown `%XX`-escaped with upper-case hex (the wire byte `0xFF` appears as `%FF`); every other byte is verbatim. `resend_http` with `flow_id` still replays the original wire bytes, not the escaped text.
+
+#### Request heads closed by the proxy
+
+HTTP/1.x request heads the proxy closed before the request was complete are recorded as `"error"` flows with `tags.closed_by = "proxy"` and one of these `failure_reason` values:
+
+| `failure_reason` | Meaning |
+|------------------|---------|
+| `request_head_timeout` | The request line and headers did not arrive within `request_timeout_ms` (`tags.request_timeout_ms` holds the value in force). An idle keep-alive connection with zero bytes of a next request is not recorded |
+| `request_line_too_long` | The request line exceeded the parser limit; the proxy answered `414 URI Too Long` |
+| `request_header_too_large` | The header section exceeded the parser limit; the proxy answered `431 Request Header Fields Too Large` |
+
+`tags.phase` is `request_line` or `headers`. `raw_request` holds the bytes received, capped at `max_raw_capture_size` (`metadata.raw_truncated = "true"` marks a capped capture, and `metadata.raw_captured_bytes` gives its length). For 414 / 431, the proxy-generated response is in `response_status_code` / `raw_response` (message `metadata.proxy_generated = "true"`); `tags.wrote_response = "false"` means the response could not be written. These flows share `conn_id` with earlier requests on the same connection. Because a client can create them by sending a partial or oversized request head, `capture_scope` and `max_raw_capture_size` bound what is stored.
+
+#### Blocked flows
+
+| `blocked_by` | Meaning |
+|--------------|---------|
+| `target_scope` | Blocked by the [target scope](../features/target-scope.md) policy |
+| `intercept_drop` | Dropped by an `intercept` `drop` action |
+| `intercept_cancelled` | An intercept hold that ended without an `intercept` action because the connection or proxy went away while it was held (`proxy_stop`, session teardown, the peer direction failing). State is `error`, and the stream `id` equals the held entry's `stream_id` |
+| `rate_limit` | Rejected by a rate limit |
+| `safety_filter` | Blocked by the Safety Filter |
+| `budget` | Rejected because the diagnostic budget was exhausted |
+| `capacity` | The proxy refused the connection because `max_connections` was reached. State is `error`, `server_addr` is the refused target (CONNECT authority, HTTP/1.x absolute-form authority, or TCP forward target), and `tags.target` is the request target as received. Written at most about 10 per second and only for targets inside `capture_scope`; the full count is in `status` -> `connection_rejections` |
+
+Like other blocked flows, no flow rows carry the held or rejected content.
 
 ### messages
 
@@ -123,16 +153,26 @@ Returns: `messages[]`, `count`, `total`.
 
 Get current proxy status and health metrics. No additional parameters.
 
-Returns: `running`, `listen_addr`, `active_connections`, `total_flows`, `db_size_bytes`, `uptime_seconds`, `ca_initialized`, `tls_fingerprint`.
+Returns: `running`, `listen_addr`, `listeners[]`, `listener_count`, `upstream_proxy`, `active_connections`, `max_connections`, `peek_timeout_ms`, `request_timeout_ms`, `total_flows`, `db_size_bytes`, `uptime_seconds`, `ca_initialized`, `socks5_enabled`, `tls_fingerprint`, `rate_limits`, `budget`, `h1_upstream`, `h2_upstream`, `connection_rejections`, `export_dir`.
+
+| Field | Description |
+|-------|-------------|
+| `listeners[]` | Per-listener `name`, `listen_addr`, `active_connections`, `uptime_seconds`, `upstream_proxy`, and -- while upstream proxy rotation is active -- `upstream_proxy_template` (credentials redacted) and `upstream_proxy_rotation_policy` |
+| `h1_upstream` | HTTP/1.x upstream redial / replay counters: `stale_detected_healthcheck`, `write_epipe`, `redial_healthcheck`, `redial_write_epipe`, `redial_failed_healthcheck`, `redial_failed_write_epipe`, `replay_success`, ... |
+| `h2_upstream` | HTTP/2 upstream redial counters: `goaway_observed_prewarm`, `goaway_observed_reactive`, `refused`, `redial_prewarm`, `redial_reactive`, `redial_refused_stream`, `prewarm_suppressed`, and the matching `redial_failed_*` counters |
+| `connection_rejections` | Connections refused because `max_connections` was reached, counted since server start: `total`, `last_at`, `by_kind` (`http1`, `connect`, `socks5`, `http2`, `tcp`, `unknown`), `recent[]` (newest first: `at`, `listener`, `forward_port`, `remote_addr`, `detected_kind`, `method`, `target`, `target_truncated`, `wrote_503`, `max_connections`, `recorded`), `unrecorded` (audit flows shed by the write-rate cap or a full recorder queue), and `out_of_scope` (not recorded because `capture_scope` excludes the target) |
+| `export_dir` | Directory that [`manage`](manage.md) `export_flows` / `import_flows` file paths are confined to. Empty means file export / import is disabled |
 
 !!! note "Modified intercept variants surface as separate flows"
     When an intercept rule modifies a request or response, both the original and the modified envelope are recorded as separate flows. The modified flow receives a fresh UUID `id` (no longer the legacy `-modified` suffix) and carries `metadata.variant = "modified"` so import round-trips stay consistent. Filter on `variant=original|modified` (or read the metadata field) to distinguish them.
 
 ### config
 
-Get current configuration including capture scope, TLS passthrough, and TCP forwards. No additional parameters.
+Get the current configuration. No additional parameters.
 
-Returns: `capture_scope`, `tls_passthrough`, `tcp_forwards`.
+Returns: `upstream_proxy`, `tls_passthrough` (patterns, count), `tcp_forwards`, `socks5_enabled`, `client_cert`, `safety_filter` (`enabled`, `input_rules`, `output_rules`), `max_connections`, `peek_timeout_ms`, `request_timeout_ms`, `tls_fingerprint`, size limits (`max_raw_capture_size`, `max_body_size`, `body_spill_threshold`, ...), `capture_scope` (`includes`, `excludes`), `intercept_queue`, and `export_dir`.
+
+`intercept_queue` echoes the current hold-queue settings in the same shape that [`configure`](configure.md) returns (`timeout_ms`, `timeout_behavior`, `queued_items`, per-protocol overrides). It is omitted until the proxy has started.
 
 ### ca_cert
 

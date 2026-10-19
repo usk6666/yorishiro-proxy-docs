@@ -67,13 +67,13 @@ Each flow contains one or more **messages**. A message represents a single direc
 | `body` | Message body content |
 | `raw_bytes` | Original bytes as captured on the wire, preserving header ordering and whitespace |
 | `method` | HTTP method (send messages only) |
-| `url` | Request URL (send messages only) |
+| `url` | Request URL (send messages only). The path is kept in wire form — percent-encoding is never decoded; bytes that are not valid UTF-8 are `%XX`-escaped in JSON output |
 | `status_code` | HTTP status code (receive messages only) |
 | `metadata` | Protocol-specific key-value pairs |
 
 ### Raw bytes
 
-The `raw_bytes` field preserves the exact bytes as they appeared on the wire. This is critical for security testing scenarios like HTTP request smuggling analysis, where header ordering, whitespace, and line endings matter. The `resend` tool's `resend_raw` action uses these bytes to replay requests byte-for-byte.
+The `raw_bytes` field preserves the exact bytes as they appeared on the wire. This is critical for security testing scenarios like HTTP request smuggling analysis, where header ordering, whitespace, and line endings matter. The [`resend_raw`](../tools/resend-raw.md) tool uses these bytes to replay requests byte-for-byte.
 
 ### Variant messages
 
@@ -230,13 +230,28 @@ Tags are key-value string pairs attached to a flow. They carry contextual inform
 | Tag | Set by | Purpose |
 |-----|--------|---------|
 | `error` | Error recording | Upstream failure details |
-| `failure_reason` | Error recording | Coarse classification for connection/TLS failures. Notable values include `client_tls_error` (USK-858: the proxy's MITM cert was rejected by the client, e.g. CA not installed or pinned) and `upstream_tls_error` (proxy -> upstream handshake failed, e.g. cert expiry / chain trust) |
+| `failure_reason` | Error recording | Coarse classification for connection/TLS failures. Notable values include `client_tls_error` (USK-858: the proxy's MITM cert was rejected by the client, e.g. CA not installed or pinned), `upstream_tls_error` (proxy -> upstream handshake failed, e.g. cert expiry / chain trust), and the request-head rejections `request_head_timeout`, `request_line_too_long`, `request_header_too_large` |
+| `closed_by` | Request-head recorder | `proxy` when the proxy itself closed the connection while reading a request head (with `phase`, `request_timeout_ms`, and `target` tags) |
 | `intercept_release_eof` | Intercept release | Attached only on successful downstream relay of an intercept-released stream (USK-857); retries and partial failures no longer flag this tag |
 | `terminated_by` | Layer (SSE/WS/H2) | Side that closed the stream (`"client"`, `"upstream"`) -- e.g. SSE-over-H2 mid-stream cancels record `terminated_by=client` (USK-903) |
 | `socks5_target` | SOCKS5 handler | Original target address from SOCKS5 request |
 | `socks5_auth_method` | SOCKS5 handler | Authentication method used |
 | `socks5_auth_user` | SOCKS5 handler | Authenticated username |
 | `smuggling_*` | Smuggling detector | HTTP request smuggling indicators |
+
+### Blocked flows
+
+Requests the proxy refused are recorded as streams with state `error` and a `blocked_by` value, filterable with `query`'s `filter.blocked_by`:
+
+| `blocked_by` | Meaning |
+|--------------|---------|
+| `target_scope` | Outside the target scope (including an intercept release re-check) |
+| `intercept_drop` | Dropped by an `intercept` action |
+| `intercept_cancelled` | Held by intercept, but the connection or proxy went away before an action (`proxy_stop`, session teardown) |
+| `rate_limit` | Rate limit exceeded |
+| `safety_filter` | Blocked by the SafetyFilter Input Filter |
+| `budget` | Diagnostic budget exhausted |
+| `capacity` | Connection refused because `max_connections` was reached (recorded at most ~10/s; full counts in `query` `status` → `connection_rejections`) |
 
 ### Anomalies
 
@@ -267,6 +282,8 @@ The `conn_info` object on each flow records network-level details:
 | `tls_cipher` | Negotiated cipher suite |
 | `tls_alpn` | Negotiated ALPN protocol (e.g., `h2`, `http/1.1`) |
 | `tls_server_cert_subject` | Subject DN of the upstream server's TLS certificate |
+| `tls_client_ja3` | JA3 fingerprint (MD5 hex) of the client's ClientHello (MITM only) |
+| `tls_client_ja4` | JA4 fingerprint of the client's ClientHello (MITM only) |
 
 ## Querying flows
 

@@ -44,6 +44,10 @@ For WSS connections, the WebSocket upgrade happens inside an HTTPS MITM tunnel:
 
 The WSS path uses the configured TLS transport (e.g., uTLS fingerprint) for the upstream connection, and records TLS metadata (version, cipher suite, server certificate subject) on the flow.
 
+### Server-first messages
+
+After the upgrade, both directions are relayed from the start. A WebSocket protocol where the server speaks first (a greeting or push message) reaches the client immediately, without waiting for the client to send a frame. If the client goes away while the upstream is idle, the upstream side is torn down; after a client Close frame, the server's Close reply is still delivered (RFC 6455 §7.1.1).
+
 ## Frame-per-Envelope recording
 
 Each parsed wire frame produces exactly one `WSMessage` envelope. Control frames (Ping / Pong / Close) and continuation frames are **not** coalesced; the Pipeline observes them individually. The Layer never auto-responds to Ping (MITM transparency).
@@ -99,7 +103,7 @@ The flow starts when the WebSocket upgrade succeeds and ends when either side cl
 
 The WebSocket Layer participates in the standard Pipeline. Plugin authors register hooks via the pluginv2 engine using the `(protocol, event, phase)` triple — for example `(ws, on_frame, pre)` to observe each frame envelope before intercept.
 
-Plugin capabilities (per the canonical 8-step Pipeline):
+Plugin capabilities (per the canonical Pipeline):
 
 - **Drop frames** via the Pre-Intercept phase
 - **Modify payloads** via Transform / Macro Steps

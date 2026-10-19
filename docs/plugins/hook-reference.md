@@ -70,7 +70,9 @@ Fires when a connection closes.
 
 Fires after a TLS handshake completes. Fires once for the proxy's MITM-server side and again for the upstream-client side.
 
-`msg` keys: `side` (`"server"` or `"client"`), `sni`, `alpn`, `version_name`, `cipher_name`, `peer_cert_subject`, `client_fingerprint`.
+`msg` keys: `side` (`"server"` or `"client"`), `sni`, `alpn`, `version_name`, `cipher_name`, `peer_cert_subject`, `client_fingerprint`, `ja3`, `ja4`.
+
+`ja3` / `ja4` carry the JA3 (MD5 hex) and JA4 fingerprints of the client's ClientHello, computed from the MITM ClientHello peek. They are empty when no client ClientHello was observed (for example on the upstream side, or for ClientHellos larger than 4 KiB). `client_fingerprint` mirrors `ja4` for backward compatibility.
 
 ### `socks5.on_connect`
 

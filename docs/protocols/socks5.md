@@ -179,6 +179,8 @@ The SOCKS5 handler dispatches the `(socks5, on_connect)` lifecycle hook after a 
 
 The SOCKS5 negotiator enforces target scope and rate limit rules before establishing the upstream connection. If a target is blocked by scope rules, the negotiator responds with SOCKS5 reply code `0x02` (connection not allowed by ruleset). Rate-limited targets also receive the same error reply.
 
+Because the check runs before any tunneled byte is observed, a SOCKS5 target has no scheme: target scope rules that carry `schemes` do not match it. Scope SOCKS5 targets by `hostname` and `ports`. Admitted tunnels are re-checked when the scope changes (a `SIGHUP` policy reload or a `security` call) and closed if they would no longer be admitted.
+
 ## Limitations
 
 - **CONNECT only** -- `BIND` (0x02) and `UDP ASSOCIATE` (0x03) commands are not supported

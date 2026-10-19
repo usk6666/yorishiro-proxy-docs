@@ -9,7 +9,7 @@ Resend a recorded raw byte payload via a freshly dialled TCP (or TLS) upstream c
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `flow_id` | string | Yes | | Recorded raw stream id |
-| `target_addr` | string | Yes | | Upstream `host:port`. Explicit port required (no defaulting -- raw is protocol-agnostic) |
+| `target_addr` | string | Yes | | Upstream `host:port`. Explicit decimal port required (no defaulting -- raw is protocol-agnostic). An empty host (`:80`), empty port (`host:`), or service-name port (`host:http`) is rejected so the target scope check always sees the real port |
 | `use_tls` | boolean | No | `false` | `true` to upgrade the dialled connection to TLS |
 | `sni` | string | No | target host | SNI server name. Defaults to `target_addr` host portion when `use_tls=true` |
 | `override_bytes` | string | No | | Replacement payload interpreted per `override_bytes_encoding`. Mutually exclusive with `patches` |

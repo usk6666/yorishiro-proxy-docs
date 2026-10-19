@@ -171,13 +171,14 @@ The response includes `flow_type: "stream"`, `message_count` with the total numb
 Each SSE event passes through the following steps in order:
 
 1. **Parse** -- `SSEParser.Next()` reads and parses the next event from the stream
-2. **Plugin hook** -- `on_receive_from_server` (event-level)
+2. **Plugin hook** -- `("sse", "on_event")` at `pre_pipeline`
 3. **Snapshot** -- original event data is captured for variant tracking
 4. **Intercept** -- event is checked against intercept rules; if matched, held for review (release / drop / modify)
-5. **Plugin hook** -- `on_before_send_to_client` (event-level)
+5. **Plugin hook** -- `("sse", "on_event")` at `post_pipeline`
 6. **Record** -- event is saved to the flow store (with variant if modified)
-7. **Output filter** -- PII masking / block rules applied to the data
-8. **Forward** -- the (possibly filtered) event bytes are written to the client
+7. **Forward** -- the (possibly modified) event bytes are written to the client
+
+The Output Filter does not touch the wire; it masks data only when an MCP tool returns recorded events to the agent.
 
 ## TCP-forward dispatch
 
